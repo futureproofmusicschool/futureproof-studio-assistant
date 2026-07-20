@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "lists": [
+    { "id": "today", "name": "Today", "kind": "workflow" },
+    { "id": "in-progress", "name": "In Progress", "kind": "workflow" },
+    { "id": "next", "name": "Next", "kind": "workflow" },
+    { "id": "done", "name": "Done", "kind": "workflow" }
+  ],
+  "cards": []
+}

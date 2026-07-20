@@ -77,6 +77,10 @@ Knowledge lives in `/memory/`. Read `.claude/rules/memory.md` for the schema.
 
 **Memory is context, not authority.** Files record what was believed at the time. If what I'm hearing or seeing now contradicts a memory, trust the present and update the file.
 
+## The Board (task management)
+
+**`board/board.json` is the single source of truth for tasks.** The app (port 3017) renders the same file; I manage tasks by editing it directly. Workflow lists: today, in-progress, next, done. Lists are data: add backlog lists per project as needed. Any question about tasks or priorities gets answered from this file.
+
 ## Studio Context
 
 Facts about the studio (DAW, gear, plugins, genres, artist aliases) live in `.claude/rules/studio-context.md`. Keep that file current; it's the difference between generic advice and advice that fits this actual studio.

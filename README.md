@@ -31,12 +31,31 @@ A good first prompt: *"Read your CLAUDE.md and studio-context.md, then interview
 | Path | What it is |
 |------|-----------|
 | `CLAUDE.md` | The soul document. Identity, purpose, working style. Loaded every session. |
+| `assistant.json` | The app config: your assistant's name, accent color, enabled tabs. |
 | `.claude/rules/studio-context.md` | Facts about YOUR studio: DAW, gear, plugins, genres, aliases. |
 | `.claude/rules/memory.md` | How the memory system works (schema and conventions). |
 | `memory/working-self.md` | The assistant's current state: active projects, this week's focus. |
 | `memory/episodic/` | Events: "what happened" (sessions, decisions, experiments). |
 | `memory/semantic/` | Facts: "what's true" (your taste, your patterns, validated insights). |
 | `memory/procedural/` | How-tos: "how we do things" (workflows, gear recipes, workarounds). |
+| `board/board.json` | Your task board's data. The app renders it; the assistant edits it. |
+| `app/` | The web interface: Board, Chat, and Interviews tabs (Next.js, port 3017). |
+| `voice/` | The voice-interview server (Gemini Live, port 3015). |
+| `interviews/templates/` | Briefings for voice sessions (onboarding, session debrief, brainstorm). |
+
+## The app
+
+The web interface is the daily way to work with your assistant:
+
+```bash
+cd app && npm install && npm run dev
+```
+
+Open http://localhost:3017. Three tabs:
+
+- **Board**: a kanban task board. The data is a plain JSON file (`board/board.json`), so the assistant manages your tasks by editing the same file the app renders. One source of truth, no accounts.
+- **Chat**: the assistant with everything: the repo, the memory, the board. Powered by the Claude Agent SDK using your existing Claude Code login (no API key needed). It can read and edit the repo, including the board.
+- **Interviews**: spoken conversations, deliberately separate. **Voice gathers, text thinks**: the voice agent gets a one-page briefing and cannot see the repo; afterward the assistant reads the transcript and files what it learned into memory. Requires a `GEMINI_API_KEY` in a repo-root `.env` file and the voice server running (`cd voice && npm install && npm start`).
 
 ## What comes next
 
@@ -45,5 +64,6 @@ Once the foundation works, you extend it:
 - **MCP tools**: connect Ableton Live, your file system, streaming APIs, whatever your workflow touches
 - **Skills**: repeatable workflows the assistant can run on request
 - **Automation**: scheduled tasks (session logs, library scans)
+- **More tabs**: the app's tab registry makes new screens (a stats dashboard, a release tracker) one entry each
 
 Add these only when you feel the need. A small assistant that knows you well beats a big one that doesn't.

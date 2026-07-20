@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#100d18">
+    <title>TEO Voice</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <div class="identity">
+          <span class="mark" aria-hidden="true">T</span>
+          <div>
+            <p class="eyebrow">Studio interview</p>
+            <h1>Talk with TEO</h1>
+          </div>
+        </div>
+        <div class="status" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Ready</span>
+        </div>
+      </header>
+
+      <section class="conversation" aria-labelledby="transcript-heading">
+        <div class="conversation-heading">
+          <div>
+            <p class="eyebrow">Live record</p>
+            <h2 id="transcript-heading">Transcript</h2>
+          </div>
+          <span id="session-time" class="session-time">00:00</span>
+        </div>
+        <div id="transcript" class="transcript" aria-live="polite" aria-relevant="additions text">
+          <p class="empty-state">Start a session, then speak naturally. The complete conversation is saved when you stop.</p>
+        </div>
+      </section>
+
+      <footer class="controls">
+        <button id="start" class="button button-primary" type="button">
+          <span class="button-dot" aria-hidden="true"></span>
+          Start conversation
+        </button>
+        <button id="stop" class="button button-secondary" type="button" disabled>Stop and save</button>
+        <p class="privacy">Microphone audio is relayed directly to Gemini Live. Your API key stays on this machine.</p>
+      </footer>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
