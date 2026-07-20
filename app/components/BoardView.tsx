@@ -12,6 +12,14 @@ type RequestOptions = {
   body?: unknown;
 };
 
+const CARD_TRANSFER_TYPE = "application/x-board-card";
+const LIST_TRANSFER_TYPE = "application/x-board-list";
+
+type ListDropTarget = {
+  id: string;
+  edge: "left" | "right";
+};
+
 async function responseError(response: Response) {
   try {
     const body = (await response.json()) as { error?: string };
@@ -21,15 +29,19 @@ async function responseError(response: Response) {
   }
 }
 
-function orderedLists(lists: BoardList[]) {
-  return lists
-    .map((list, index) => ({ list, index }))
-    .sort((a, b) => {
-      const aGroup = a.list.kind === "backlog" ? 1 : 0;
-      const bGroup = b.list.kind === "backlog" ? 1 : 0;
-      return aGroup - bGroup || a.index - b.index;
-    })
-    .map(({ list }) => list);
+function hasTransferType(dataTransfer: DataTransfer, type: string) {
+  return Array.from(dataTransfer.types).includes(type);
+}
+
+function reorderAtTarget(lists: BoardList[], draggedId: string, targetId: string) {
+  const fromIndex = lists.findIndex((list) => list.id === draggedId);
+  const targetIndex = lists.findIndex((list) => list.id === targetId);
+  if (fromIndex === -1 || targetIndex === -1 || fromIndex === targetIndex) return lists;
+
+  const reordered = [...lists];
+  const [dragged] = reordered.splice(fromIndex, 1);
+  reordered.splice(targetIndex, 0, dragged);
+  return reordered;
 }
 
 function dateInputValue(due: string | null) {
@@ -53,10 +65,13 @@ export function BoardView({ initialBoard }: BoardViewProps) {
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragTarget, setDragTarget] = useState<string | null>(null);
+  const [draggedListId, setDraggedListId] = useState<string | null>(null);
+  const [listDropTarget, setListDropTarget] = useState<ListDropTarget | null>(null);
+  const [reorderError, setReorderError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const lists = useMemo(() => orderedLists(board.lists), [board.lists]);
+  const lists = useMemo(() => board.lists, [board.lists]);
   const editingCard = board.cards.find((card) => card.id === editingId) ?? null;
 
   const refresh = useCallback(async () => {
@@ -75,6 +90,12 @@ export function BoardView({ initialBoard }: BoardViewProps) {
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!reorderError) return;
+    const timeout = window.setTimeout(() => setReorderError(null), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [reorderError]);
 
   const mutate = useCallback(
     async (path: string, options: RequestOptions) => {
@@ -124,6 +145,45 @@ export function BoardView({ initialBoard }: BoardViewProps) {
     }
   }
 
+  async function persistListOrder(nextLists: BoardList[]) {
+    setBoard((current) => ({ ...current, lists: nextLists }));
+    setBusy(true);
+    setReorderError(null);
+
+    let requestError: Error | null = null;
+    try {
+      const response = await fetch("/api/board/lists/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: nextLists.map((list) => list.id) }),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+    } catch (mutationError) {
+      requestError = mutationError instanceof Error ? mutationError : new Error("Unable to save list order");
+    }
+
+    await refresh();
+    setBusy(false);
+    if (requestError) setReorderError(`List order was not saved. ${requestError.message}`);
+  }
+
+  function listDropEdge(targetId: string, sourceId: string): ListDropTarget["edge"] {
+    const sourceIndex = board.lists.findIndex((list) => list.id === sourceId);
+    const targetIndex = board.lists.findIndex((list) => list.id === targetId);
+    return targetIndex > sourceIndex ? "right" : "left";
+  }
+
+  function moveListByOffset(listId: string, offset: -1 | 1) {
+    const fromIndex = board.lists.findIndex((list) => list.id === listId);
+    const toIndex = fromIndex + offset;
+    if (busy || fromIndex === -1 || toIndex < 0 || toIndex >= board.lists.length) return;
+
+    const reordered = [...board.lists];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    void persistListOrder(reordered);
+  }
+
   return (
     <section className="board-page" aria-busy={busy}>
       <div className="board-heading">
@@ -131,7 +191,10 @@ export function BoardView({ initialBoard }: BoardViewProps) {
           <p className="eyebrow">Workspace</p>
           <h1>Board</h1>
         </div>
-        <p className="board-hint">Drag cards between lists, or open a card to move it.</p>
+        <div className="board-heading-notes">
+          {reorderError ? <p className="reorder-error-note" role="status">{reorderError}</p> : null}
+          <p className="board-hint">Drag cards between lists. Drag column headers to reorder.</p>
+        </div>
       </div>
 
       {error ? (
@@ -151,26 +214,105 @@ export function BoardView({ initialBoard }: BoardViewProps) {
               <section
                 className={`board-column ${list.kind === "backlog" ? "board-column-backlog" : ""}`}
                 data-drag-target={dragTarget === list.id ? "true" : "false"}
+                data-list-drop-edge={listDropTarget?.id === list.id ? listDropTarget.edge : undefined}
                 key={list.id}
-                onDragEnter={() => setDragTarget(list.id)}
-                onDragOver={(event) => event.preventDefault()}
+                onDragEnter={(event) => {
+                  if (hasTransferType(event.dataTransfer, CARD_TRANSFER_TYPE)) {
+                    setDragTarget(list.id);
+                  } else if (hasTransferType(event.dataTransfer, LIST_TRANSFER_TYPE)) {
+                    const sourceId = draggedListId;
+                    if (sourceId && sourceId !== list.id) {
+                      setListDropTarget({ id: list.id, edge: listDropEdge(list.id, sourceId) });
+                    } else {
+                      setListDropTarget(null);
+                    }
+                  }
+                }}
+                onDragOver={(event) => {
+                  if (hasTransferType(event.dataTransfer, CARD_TRANSFER_TYPE)) {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    setDragTarget(list.id);
+                  } else if (hasTransferType(event.dataTransfer, LIST_TRANSFER_TYPE)) {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    const sourceId = draggedListId;
+                    if (sourceId && sourceId !== list.id) {
+                      setListDropTarget({ id: list.id, edge: listDropEdge(list.id, sourceId) });
+                    } else {
+                      setListDropTarget(null);
+                    }
+                  }
+                }}
                 onDragLeave={(event) => {
                   if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                     setDragTarget(null);
+                    setListDropTarget(null);
                   }
                 }}
                 onDrop={(event) => {
-                  event.preventDefault();
-                  const cardId = event.dataTransfer.getData("text/plain") || draggedId;
-                  if (cardId) void moveCard(cardId, list.id);
+                  if (hasTransferType(event.dataTransfer, LIST_TRANSFER_TYPE)) {
+                    event.preventDefault();
+                    const sourceId = event.dataTransfer.getData(LIST_TRANSFER_TYPE) || draggedListId;
+                    setDraggedListId(null);
+                    setListDropTarget(null);
+                    if (sourceId) {
+                      const reordered = reorderAtTarget(board.lists, sourceId, list.id);
+                      if (reordered !== board.lists) void persistListOrder(reordered);
+                    }
+                  } else if (hasTransferType(event.dataTransfer, CARD_TRANSFER_TYPE)) {
+                    event.preventDefault();
+                    const cardId = event.dataTransfer.getData(CARD_TRANSFER_TYPE) || draggedId;
+                    if (cardId) void moveCard(cardId, list.id);
+                  }
                 }}
               >
-                <header className="column-header">
-                  <div>
+                <header
+                  className="column-header"
+                  draggable={!busy}
+                  onDragEnd={() => {
+                    setDraggedListId(null);
+                    setListDropTarget(null);
+                  }}
+                  onDragStart={(event) => {
+                    if ((event.target as HTMLElement).closest(".column-move-button")) {
+                      event.preventDefault();
+                      return;
+                    }
+                    setDraggedListId(list.id);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData(LIST_TRANSFER_TYPE, list.id);
+                  }}
+                >
+                  <div className="column-title">
                     <span className="column-indicator" aria-hidden="true" />
                     <h2>{list.name}</h2>
                   </div>
-                  <span className="card-count" aria-label={`${cards.length} cards`}>{cards.length}</span>
+                  <div className="column-header-actions">
+                    <span className="card-count" aria-label={`${cards.length} cards`}>{cards.length}</span>
+                    <div className="column-move-controls" aria-label={`Move ${list.name} list`}>
+                      <button
+                        aria-label={`Move ${list.name} left`}
+                        className="column-move-button"
+                        disabled={busy || board.lists[0]?.id === list.id}
+                        draggable={false}
+                        onClick={() => moveListByOffset(list.id, -1)}
+                        type="button"
+                      >
+                        ←
+                      </button>
+                      <button
+                        aria-label={`Move ${list.name} right`}
+                        className="column-move-button"
+                        disabled={busy || board.lists.at(-1)?.id === list.id}
+                        draggable={false}
+                        onClick={() => moveListByOffset(list.id, 1)}
+                        type="button"
+                      >
+                        →
+                      </button>
+                    </div>
+                  </div>
                 </header>
 
                 <div className="card-stack">
@@ -190,7 +332,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
                       onDragStart={(event) => {
                         setDraggedId(card.id);
                         event.dataTransfer.effectAllowed = "move";
-                        event.dataTransfer.setData("text/plain", card.id);
+                        event.dataTransfer.setData(CARD_TRANSFER_TYPE, card.id);
                       }}
                       type="button"
                     >
@@ -350,7 +492,7 @@ function CardPanel({
             <label>
               List
               <select onChange={(event) => setList(event.target.value)} value={list}>
-                {orderedLists(board.lists).map((item) => (
+                {board.lists.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
               </select>
