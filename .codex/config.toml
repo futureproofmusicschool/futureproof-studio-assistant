@@ -1,0 +1,5 @@
+# Codex uses project-scoped MCP configuration from this file after the repo is trusted.
+# Keep this server definition aligned with the Claude Code equivalent in ../.mcp.json.
+[mcp_servers.AbletonMCP]
+command = "uvx"
+args = ["ableton-mcp"]

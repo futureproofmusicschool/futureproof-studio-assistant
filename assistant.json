@@ -1,1 +1,6 @@
-{ "name": "Assistant", "accentColor": "#7c5cff", "tabs": ["board", "chat", "interviews"] }
+{
+  "name": "Assistant",
+  "accentColor": "#7c5cff",
+  "chatProvider": "claude",
+  "tabs": ["board", "chat", "interviews"]
+}

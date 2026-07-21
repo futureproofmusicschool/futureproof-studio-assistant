@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ChatProvider } from "@/lib/config";
 
 type ChatMessage = {
   id: string;
@@ -17,6 +18,7 @@ type ChatMessage = {
 
 type ChatViewProps = {
   assistantName: string;
+  defaultProvider: ChatProvider;
 };
 
 type StreamEvent = {
@@ -24,8 +26,13 @@ type StreamEvent = {
   data: unknown;
 };
 
-const STORAGE_KEY = "teo-chat-conversation";
+const STORAGE_KEY = "studio-assistant-chat-conversation";
 const HANDOFF_KEY = "studio-assistant-chat-handoff-draft";
+
+const PROVIDER_LABELS: Record<ChatProvider, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+};
 
 function inlineContent(text: string, keyPrefix: string): ReactNode[] {
   const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
@@ -120,9 +127,10 @@ function eventRecord(data: unknown): Record<string, unknown> {
   return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : {};
 }
 
-export function ChatView({ assistantName }: ChatViewProps) {
+export function ChatView({ assistantName, defaultProvider }: ChatViewProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionId, setSessionId] = useState<string>();
+  const [provider, setProvider] = useState<ChatProvider>(defaultProvider);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string>();
@@ -134,9 +142,16 @@ export function ChatView({ assistantName }: ChatViewProps) {
     try {
       const saved = window.sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as { messages?: ChatMessage[]; sessionId?: string };
+        const parsed = JSON.parse(saved) as {
+          messages?: ChatMessage[];
+          provider?: ChatProvider;
+          sessionId?: string;
+        };
         if (Array.isArray(parsed.messages)) {
           setMessages(parsed.messages);
+        }
+        if (parsed.provider === "claude" || parsed.provider === "codex") {
+          setProvider(parsed.provider);
         }
         if (typeof parsed.sessionId === "string") {
           setSessionId(parsed.sessionId);
@@ -159,8 +174,11 @@ export function ChatView({ assistantName }: ChatViewProps) {
       return;
     }
 
-    window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ messages, sessionId }));
-  }, [hydrated, messages, sessionId]);
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ messages, provider, sessionId }),
+    );
+  }, [hydrated, messages, provider, sessionId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: streaming ? "auto" : "smooth" });
@@ -181,6 +199,19 @@ export function ChatView({ assistantName }: ChatViewProps) {
     setDraft("");
     setError(undefined);
     window.sessionStorage.removeItem(STORAGE_KEY);
+  };
+
+  const changeProvider = (nextProvider: ChatProvider) => {
+    if (nextProvider === provider) {
+      return;
+    }
+
+    stop();
+    setMessages([]);
+    setSessionId(undefined);
+    setDraft("");
+    setError(undefined);
+    setProvider(nextProvider);
   };
 
   const send = async () => {
@@ -207,7 +238,7 @@ export function ChatView({ assistantName }: ChatViewProps) {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, ...(sessionId ? { sessionId } : {}) }),
+        body: JSON.stringify({ message, provider, ...(sessionId ? { sessionId } : {}) }),
         signal: controller.signal,
       });
 
@@ -291,9 +322,23 @@ export function ChatView({ assistantName }: ChatViewProps) {
           <p className="eyebrow">Repository agent</p>
           <h1>Chat</h1>
         </div>
-        <button className="chat-new-button" onClick={newConversation} type="button">
-          New conversation
-        </button>
+        <div className="chat-heading-actions">
+          <label className="chat-provider">
+            <span>Provider</span>
+            <select
+              aria-label="Chat provider"
+              disabled={streaming}
+              onChange={(event) => changeProvider(event.target.value as ChatProvider)}
+              value={provider}
+            >
+              <option value="claude">Claude Code</option>
+              <option value="codex">Codex</option>
+            </select>
+          </label>
+          <button className="chat-new-button" onClick={newConversation} type="button">
+            New conversation
+          </button>
+        </div>
       </header>
 
       <div className="chat-transcript" aria-live="polite">
@@ -352,7 +397,10 @@ export function ChatView({ assistantName }: ChatViewProps) {
             </button>
           )}
         </div>
-        <p className="chat-repo-note">{assistantName} can read and edit this repo, including the board.</p>
+        <p className="chat-repo-note">
+          Using {PROVIDER_LABELS[provider]}. {assistantName} can read and edit this repo, including
+          the board. Switching providers starts a new conversation.
+        </p>
       </div>
     </section>
   );
