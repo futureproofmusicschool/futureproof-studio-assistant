@@ -25,6 +25,13 @@ export type Board = {
   cards: BoardCard[];
 };
 
+export {
+  BoardListMutationError,
+  createBoardList,
+  deleteBoardList,
+  renameBoardList,
+} from "@/lib/board-list-mutations";
+
 const BOARD_PATH = repoPath("board", "board.json");
 const TEMP_PATH = `${BOARD_PATH}.tmp`;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";

@@ -67,6 +67,9 @@ export function BoardView({ initialBoard }: BoardViewProps) {
   const [dragTarget, setDragTarget] = useState<string | null>(null);
   const [draggedListId, setDraggedListId] = useState<string | null>(null);
   const [listDropTarget, setListDropTarget] = useState<ListDropTarget | null>(null);
+  const [addingList, setAddingList] = useState(false);
+  const [renamingListId, setRenamingListId] = useState<string | null>(null);
+  const [openListMenuId, setOpenListMenuId] = useState<string | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -96,6 +99,15 @@ export function BoardView({ initialBoard }: BoardViewProps) {
     const timeout = window.setTimeout(() => setReorderError(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [reorderError]);
+
+  useEffect(() => {
+    if (!openListMenuId) return;
+    function closeListMenu(event: PointerEvent) {
+      if (!(event.target as HTMLElement).closest(".column-menu")) setOpenListMenuId(null);
+    }
+    document.addEventListener("pointerdown", closeListMenu);
+    return () => document.removeEventListener("pointerdown", closeListMenu);
+  }, [openListMenuId]);
 
   const mutate = useCallback(
     async (path: string, options: RequestOptions) => {
@@ -128,6 +140,44 @@ export function BoardView({ initialBoard }: BoardViewProps) {
         body: { title: title.trim(), list },
       });
       setAddingTo(null);
+    } catch {
+      return;
+    }
+  }
+
+  async function createList(name: string) {
+    if (!name.trim()) return;
+    try {
+      await mutate("/api/board/lists", { method: "POST", body: { name: name.trim() } });
+      setAddingList(false);
+    } catch {
+      return;
+    }
+  }
+
+  async function renameList(listId: string, name: string) {
+    if (!name.trim()) return;
+    try {
+      await mutate(`/api/board/lists/${listId}`, {
+        method: "PATCH",
+        body: { name: name.trim() },
+      });
+      setRenamingListId(null);
+    } catch {
+      return;
+    }
+  }
+
+  async function deleteList(list: BoardList, cardCount: number) {
+    if (board.lists.length === 1) return;
+    const message = cardCount > 0
+      ? `Delete the list '${list.name}' and its ${cardCount} ${cardCount === 1 ? "card" : "cards"}? This cannot be undone.`
+      : `Delete the empty list '${list.name}'? This cannot be undone.`;
+    if (!window.confirm(message)) return;
+
+    setOpenListMenuId(null);
+    try {
+      await mutate(`/api/board/lists/${list.id}`, { method: "DELETE" });
     } catch {
       return;
     }
@@ -275,7 +325,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
                     setListDropTarget(null);
                   }}
                   onDragStart={(event) => {
-                    if ((event.target as HTMLElement).closest(".column-move-button")) {
+                    if ((event.target as HTMLElement).closest(".column-move-button, .column-menu, .column-title-input")) {
                       event.preventDefault();
                       return;
                     }
@@ -286,7 +336,17 @@ export function BoardView({ initialBoard }: BoardViewProps) {
                 >
                   <div className="column-title">
                     <span className="column-indicator" aria-hidden="true" />
-                    <h2>{list.name}</h2>
+                    {renamingListId === list.id ? (
+                      <InlineListNameInput
+                        disabled={busy}
+                        initialName={list.name}
+                        label={`Rename ${list.name} list`}
+                        onCancel={() => setRenamingListId(null)}
+                        onSave={(name) => void renameList(list.id, name)}
+                      />
+                    ) : (
+                      <h2>{list.name}</h2>
+                    )}
                   </div>
                   <div className="column-header-actions">
                     <span className="card-count" aria-label={`${cards.length} cards`}>{cards.length}</span>
@@ -311,6 +371,49 @@ export function BoardView({ initialBoard }: BoardViewProps) {
                       >
                         →
                       </button>
+                    </div>
+                    <div className="column-menu" data-list-menu={list.id}>
+                      <button
+                        aria-expanded={openListMenuId === list.id}
+                        aria-haspopup="menu"
+                        aria-label={`Actions for ${list.name}`}
+                        className="column-menu-button"
+                        disabled={busy}
+                        draggable={false}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenListMenuId((current) => current === list.id ? null : list.id);
+                        }}
+                        onDragStart={(event) => event.preventDefault()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        type="button"
+                      >
+                        <span aria-hidden="true">•••</span>
+                      </button>
+                      {openListMenuId === list.id ? (
+                        <div className="column-menu-popover" role="menu">
+                          <button
+                            onClick={() => {
+                              setRenamingListId(list.id);
+                              setOpenListMenuId(null);
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="column-menu-delete"
+                            disabled={board.lists.length === 1}
+                            onClick={() => void deleteList(list, cards.length)}
+                            role="menuitem"
+                            title={board.lists.length === 1 ? "A board must keep at least one list" : undefined}
+                            type="button"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </header>
@@ -364,6 +467,27 @@ export function BoardView({ initialBoard }: BoardViewProps) {
               </section>
             );
           })}
+          <section className={`add-list-column ${addingList ? "add-list-column-active" : ""}`}>
+            {addingList ? (
+              <InlineListNameInput
+                disabled={busy}
+                label="New list name"
+                onCancel={() => setAddingList(false)}
+                onSave={(name) => void createList(name)}
+                placeholder="List name"
+              />
+            ) : (
+              <button
+                className="add-list-button"
+                disabled={busy}
+                onClick={() => setAddingList(true)}
+                type="button"
+              >
+                <span aria-hidden="true">+</span>
+                Add list
+              </button>
+            )}
+          </section>
         </div>
       </div>
 
@@ -384,6 +508,56 @@ export function BoardView({ initialBoard }: BoardViewProps) {
         />
       ) : null}
     </section>
+  );
+}
+
+function InlineListNameInput({
+  disabled,
+  initialName = "",
+  label,
+  onCancel,
+  onSave,
+  placeholder,
+}: {
+  disabled: boolean;
+  initialName?: string;
+  label: string;
+  onCancel: () => void;
+  onSave: (name: string) => void;
+  placeholder?: string;
+}) {
+  const [name, setName] = useState(initialName);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel();
+    }
+    if (event.key === "Enter" && !event.nativeEvent.isComposing && name.trim()) {
+      event.preventDefault();
+      onSave(name);
+    }
+  }
+
+  return (
+    <input
+      aria-label={label}
+      autoFocus
+      className="column-title-input"
+      disabled={disabled}
+      draggable={false}
+      onChange={(event) => setName(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onDragStart={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onKeyDown={handleKeyDown}
+      onPointerDown={(event) => event.stopPropagation()}
+      placeholder={placeholder}
+      value={name}
+    />
   );
 }
 
