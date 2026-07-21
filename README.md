@@ -67,3 +67,9 @@ Once the foundation works, you extend it:
 - **More tabs**: the app's tab registry makes new screens (a stats dashboard, a release tracker) one entry each
 
 Add these only when you feel the need. A small assistant that knows you well beats a big one that doesn't.
+
+## Credits
+
+Written by John von Seggern. A [Futureproof Music School](https://futureproofmusicschool.com) project.
+
+Made for the Futureproof community: copy it, rename it, make it yours.
