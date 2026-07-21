@@ -1,6 +1,6 @@
-# Studio Assistant
+# Futureproof Studio Assistant
 
-A template for building your own AI studio assistant with Claude Code.
+A template for building your own AI studio assistant with Claude Code. From [Futureproof Music School](https://futureproofmusicschool.com).
 
 This repo is the *structure* of an assistant, not the assistant itself. You make it yours by filling in the placeholders: give it a name, tell it about your studio, and let its memory grow as you work together.
 
@@ -68,8 +68,8 @@ Once the foundation works, you extend it:
 
 Add these only when you feel the need. A small assistant that knows you well beats a big one that doesn't.
 
-## Credits
+## License and credits
 
-Written by John von Seggern. A [Futureproof Music School](https://futureproofmusicschool.com) project.
+Written by John von Seggern. A [Futureproof Music School](https://futureproofmusicschool.com) project, MIT licensed (see [LICENSE](LICENSE)).
 
-Made for the Futureproof community: copy it, rename it, make it yours.
+Made for the Futureproof community: copy it, rename it, make it yours. Your assistant deserves its own name anyway.
