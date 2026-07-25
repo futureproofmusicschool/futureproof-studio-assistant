@@ -23,7 +23,8 @@ That is the foundation. MCP tools, skills, automation, and the local app sit on 
    - Codex: run `codex`
 3. **Fill in the placeholders.** Search for `TODO` across the repo. Start with:
    - `AGENTS.md`: name the assistant and personalize its identity and purpose
-   - `assistant.json`: use the same name, choose the initial Chat provider, and set the accent color
+   - `assistant.json`: use the same name and set the accent color
+   - `voice/prompt.md`: describe the artist so the voice assistant is not generic
    - `.claude/rules/studio-context.md`: add your DAW, gear, genres, and workflow
 4. **Start working.** Open the repo in either client and ask for help with a track. Tell the assistant what is worth remembering and ask it to save durable learnings.
 
@@ -40,7 +41,6 @@ The repository keeps shared behavior and data independent of the client:
 | Assistant identity | `CLAUDE.md` imports `AGENTS.md` | `AGENTS.md` loads automatically |
 | Memory and studio context | `.claude/rules/` loads automatically | `AGENTS.md` directs Codex to the same files |
 | Ableton MCP | `.mcp.json` | `.codex/config.toml` |
-| Local Chat backend | Anthropic Agent SDK | OpenAI Codex SDK |
 
 The MCP files use different formats, so keep their server definitions aligned when you add or remove tools. Codex only loads project `.codex/config.toml` settings after you trust the repository.
 
@@ -52,7 +52,7 @@ Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`
 |---|---|
 | `AGENTS.md` | Canonical soul document shared by Claude Code and Codex. Edit this file. |
 | `CLAUDE.md` | Thin Claude Code entry point that imports `AGENTS.md`. |
-| `assistant.json` | App name, accent color, initial Chat provider, and enabled tabs. |
+| `assistant.json` | App name, accent color, and enabled tabs. |
 | `.claude/rules/studio-context.md` | Facts about your studio: DAW, gear, plugins, genres, and aliases. |
 | `.claude/rules/memory.md` | Memory schema and conventions shared by both clients. |
 | `.mcp.json` | Claude Code project MCP configuration. |
@@ -62,9 +62,10 @@ Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`
 | `memory/semantic/` | Facts: taste, patterns, and validated insights. |
 | `memory/procedural/` | Repeatable workflows, gear recipes, and workarounds. |
 | `board/board.json` | Task board data shared by the app and assistant. |
-| `app/` | Next.js interface with Board, Chat, and Interviews tabs (port 3017). |
-| `voice/` | Gemini Live voice-interview server (port 3015). |
-| `interviews/templates/` | Briefings for onboarding, session debrief, and brainstorm interviews. |
+| `app/` | Next.js interface with Talk, Board, and Contacts tabs (port 3017). Also relays the voice socket. |
+| `voice/` | Base voice prompt and saved session transcripts. |
+| `interviews/templates/` | Session modes for the Talk tab: onboarding, session debrief, brainstorm. |
+| `outbox/` | Email drafts written during a voice session. Nothing here is ever sent. |
 
 ## The app
 
@@ -78,11 +79,11 @@ npm run dev
 
 Open [http://localhost:3017](http://localhost:3017). The app has three tabs:
 
+- **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Put `GEMINI_API_KEY` in a repo-root `.env`; the key stays on the server, which relays the socket at `/api/talk/ws`.
 - **Board**: a kanban board backed by `board/board.json`. The UI and assistant edit the same source of truth.
-- **Chat**: the repo-aware assistant with access to memory and the board. Choose **Claude Code** or **Codex** from the provider menu. Each backend uses its local client authentication; run `claude` or `codex login` first if that provider is not signed in. Switching providers starts a new conversation so session IDs never cross between clients. Set the initial choice with `chatProvider` in `assistant.json` (`"claude"` or `"codex"`).
-- **Interviews**: spoken conversations kept deliberately separate. **Voice gathers, text thinks.** The voice agent receives a one-page briefing rather than the full repo. Afterward, the studio assistant reads the transcript and files what it learned into memory. Put `GEMINI_API_KEY` in a repo-root `.env`, then run `cd voice && npm install && npm start`.
+- **Contacts**: an outreach tracker backed by `contacts/contacts.json`, with a correspondence log per contact.
 
-The Chat backend lets either provider edit the repository. Claude Code retains the template's existing bypass-permissions behavior. Codex runs with workspace-write access and no interactive approvals, which keeps it inside the repository and makes it usable from the non-interactive web request.
+During a Talk session the voice assistant can search the web, search and read your studio files (memory, plans, transcripts, templates, board, contacts, project rules, and nothing else), and write an email draft to `outbox/`. It never sends anything and never edits the board. Ending a session saves the transcript to `voice/transcripts/`; the CLI assistant files it into memory afterward.
 
 ## Extending it
 

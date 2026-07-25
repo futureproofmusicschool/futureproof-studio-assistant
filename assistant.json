@@ -1,11 +1,10 @@
 {
   "name": "Assistant",
+  "userName": "You",
   "accentColor": "#7c5cff",
-  "chatProvider": "claude",
   "tabs": [
+    "talk",
     "board",
-    "contacts",
-    "chat",
-    "interviews"
+    "contacts"
   ]
 }

@@ -81,6 +81,15 @@ Knowledge lives in `/memory/`. Read `.claude/rules/memory.md` for the schema. Th
 
 **`board/board.json` is the single source of truth for tasks.** The app (port 3017) renders the same file; I manage tasks by editing it directly. Workflow lists: today, in-progress, next, done. Lists are data: add backlog lists per project as needed. Any question about tasks or priorities gets answered from this file.
 
+## The Talk tab (voice)
+
+Voice lives in the app's Talk tab (`/talk`, port 3017), backed by Gemini Live. One surface: the artist speaks or types, the assistant answers out loud, both sides stream as text. The app is the only server; it relays the Live socket at `/api/talk/ws` so `GEMINI_API_KEY` never reaches the browser.
+
+- **Base prompt:** `voice/prompt.md`. Session modes are `interviews/templates/*.md`. `/api/talk/config` assembles prompt + `memory/working-self.md` + a board/contacts digest + the mode, fresh each session, so prompt and memory edits need no rebuild.
+- **The voice agent's tools:** `googleSearch` (native), `search_studio_files` and `read_studio_file` (read-only, whitelisted to memory, plans, transcripts, templates, `.claude/rules`, the board, contacts, and the soul document), and `draft_email`. The board and contacts are readable by voice but not writable.
+- **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` after a session and say what is waiting.
+- **Transcripts** land in `voice/transcripts/YYYY-MM-DD-HHMMSS.md`, including typed turns and `**Tool:**` markers. Filing them into memory is the CLI assistant's job.
+
 ## Studio Context
 
 Facts about the studio (DAW, gear, plugins, genres, artist aliases) live in `.claude/rules/studio-context.md`. Keep that file current; it's the difference between generic advice and advice that fits this actual studio.
