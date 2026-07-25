@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "categories": [
+    { "id": "collaborators", "name": "Collaborators" },
+    { "id": "leads", "name": "Leads" },
+    { "id": "label", "name": "Labels" }
+  ],
+  "contacts": []
+}
