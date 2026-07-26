@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   try {
     // Tool failures come back as 200 with an `error` string: the model needs to
     // hear about them in the conversation, not as a dead HTTP request.
-    return NextResponse.json(runStudioTool(name, args));
+    return NextResponse.json(await runStudioTool(name, args));
   } catch (error) {
     return NextResponse.json({
       error: error instanceof Error ? error.message : `Tool ${name} failed.`,

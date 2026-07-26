@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { ABLETON_FUNCTION_DECLARATIONS, isAbletonTool, runAbletonTool } from "@/lib/ableton/tools";
 import { readContacts, writeContacts, type LogChannel } from "@/lib/contacts";
 import { REPO_ROOT, repoPath } from "@/lib/paths";
 
@@ -262,7 +263,9 @@ export function draftEmail(args: Record<string, unknown>): ToolResult {
   };
 }
 
-export function runStudioTool(name: string, args: Record<string, unknown>): ToolResult {
+export async function runStudioTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  if (isAbletonTool(name)) return runAbletonTool(name, args);
+
   switch (name) {
     case "search_studio_files":
       return searchStudioFiles(args.query, args.area);
@@ -271,6 +274,7 @@ export function runStudioTool(name: string, args: Record<string, unknown>): Tool
     case "draft_email":
       return draftEmail(args);
     // v2: board/contacts mutation tools
+    // v2: Ableton editing beyond notes/clips (load devices, browser) lives in lib/ableton/tools.ts
     default:
       return { error: `Unknown tool "${name}".` };
   }
@@ -321,4 +325,5 @@ export const FUNCTION_DECLARATIONS = [
     },
   },
   // v2: board/contacts mutation tools
+  ...ABLETON_FUNCTION_DECLARATIONS,
 ];

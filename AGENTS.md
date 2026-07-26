@@ -86,14 +86,34 @@ Knowledge lives in `/memory/`. Read `.claude/rules/memory.md` for the schema. Th
 Voice lives in the app's Talk tab (`/talk`, port 3017), backed by Gemini Live. One surface: the artist speaks or types, the assistant answers out loud, both sides stream as text. The app is the only server; it relays the Live socket at `/api/talk/ws` so `GEMINI_API_KEY` never reaches the browser.
 
 - **Base prompt:** `voice/prompt.md`. Session modes are `interviews/templates/*.md`. `/api/talk/config` assembles prompt + `memory/working-self.md` + a board/contacts digest + the mode, fresh each session, so prompt and memory edits need no rebuild.
-- **The voice agent's tools:** `googleSearch` (native), `search_studio_files` and `read_studio_file` (read-only, whitelisted to memory, plans, transcripts, templates, `.claude/rules`, the board, contacts, and the soul document), and `draft_email`. The board and contacts are readable by voice but not writable.
+- **The voice agent's tools:** `googleSearch` (native), `search_studio_files` and `read_studio_file` (read-only, whitelisted to memory, plans, transcripts, templates, `.claude/rules`, the board, contacts, and the soul document), `draft_email`, and the Ableton toolset (see "Ableton" below). The board and contacts are readable by voice but not writable.
 - **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` after a session and say what is waiting.
 - **Transcripts** land in `voice/transcripts/YYYY-MM-DD-HHMMSS.md`, including typed turns and `**Tool:**` markers. Filing them into memory is the CLI assistant's job.
 - **Sessions hang up on their own after 5 quiet minutes** (no speech, typing, or tool calls; mic level doesn't count), with a 60-second countdown and a "Keep it open" button. The transcript still saves. This caps Live-session cost when a session is left open.
 
+## Ableton (Live control)
+
+The assistant sees and controls Ableton Live; in Ableton it is a **collaborator, not just an advisor**: on request it creates and edits MIDI clips and places them in the arrangement. The reliable composing loop is build-in-session-view, then `arrange_live_clip` onto the timeline.
+
+- **Transport:** the app's Node server speaks OSC/UDP (out 11000, replies 11001) to the **AbletonOSC Remote Script vendored at `ableton/AbletonOSC/`** (lineage in its `PROVENANCE.md`). Install with `scripts/install-abletonosc.sh [user@host]`, then select AbletonOSC as a Control Surface in Live's preferences. Bridge: `app/lib/ableton/bridge.ts`; tools: `app/lib/ableton/tools.ts` (seven `get_live_*` reads plus `live_transport`, `set_live_track`, `live_clip_slot`, `edit_live_clip_notes`, `create_live_track`, `set_live_device_parameter`, `arrange_live_clip`).
+- **Which machine:** gitignored repo-root `settings.json` holds `abletonHost` (default this machine). The Talk setup screen has a picker (Bonjour scan + probe + manual hostname). Works across the LAN; never port-forward 11000/11001 (the socket is unauthenticated).
+- **Consent stance (prompt-enforced):** edit only when the artist asks or clearly implies it, confirm out loud before destructive moves, narrate every edit afterward, remind that Live's undo covers tool edits.
+
+## Desktop app (Electron)
+
+`desktop/` wraps the app in an Electron shell. It attaches to port 3017 if the server is already running, otherwise starts `app/server.js` itself (and stops it on quit); mic permission is granted to localhost only. `npm start --prefix desktop` runs it; `npm run pack --prefix desktop` builds a double-clickable app. A packaged app finds the repo via `~/.studio-assistant-desktop.json` (`{"repo": "/path/to/checkout"}`) and logs the server to `~/Library/Logs/studio-assistant-desktop.log`.
+
+## Personal data lives outside git
+
+This is ONE repo for both the public code and the owner's private studio data. The split is enforced by `.gitignore`, not by separate repos:
+
+- **Gitignored (never committed):** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/` drafts, `voice/prompt.md`, `voice/transcripts/`, `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, `.env`.
+- **Tracked:** all code, generic docs, and `examples/` (starter copies of every gitignored file). `scripts/init.sh` copies the examples into place on a fresh clone.
+- **Rule for agents:** never write a personal fact (names, projects, collaborators, machine paths) into a tracked file. Personal identity and studio facts belong in `CLAUDE.local.md` and the other gitignored files. A pre-commit hook greps staged changes as a seatbelt; treat a hook failure as a real leak, not noise.
+
 ## Studio Context
 
-Facts about the studio (DAW, gear, plugins, genres, artist aliases) live in `.claude/rules/studio-context.md`. Keep that file current; it's the difference between generic advice and advice that fits this actual studio.
+Facts about the studio (DAW, gear, plugins, genres, artist aliases) live in `.claude/rules/studio-context.md` (gitignored; start from `examples/studio-context.md`). Keep that file current; it's the difference between generic advice and advice that fits this actual studio.
 
 ## Values
 

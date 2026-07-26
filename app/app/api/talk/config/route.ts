@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
-      setup: buildSetupMessage(mode.id, config.name),
+      setup: await buildSetupMessage(mode.id, config.name),
       modes,
       mode: mode.id,
     });

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { currentAbletonHost, probeHost } from "@/lib/ableton/bridge";
 import { readBoard } from "@/lib/board";
 import { readContacts } from "@/lib/contacts";
 import { repoPath } from "@/lib/paths";
@@ -24,7 +25,10 @@ export type TalkTurn = { speaker: string; text: string };
 const RETRIEVAL_POLICY = `HOW TO USE WHAT YOU HAVE
 You already hold the working-self snapshot, the board, and the contacts digest above; answer from them directly. For anything deeper (past sessions, taste notes, procedures, old transcripts, a contact's full history) call search_studio_files first, then read_studio_file on the best hit. For facts about the outside world (dates, releases, people, venues) use search. Never guess at file contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
 
-You can also draft an email with draft_email. It writes a file to outbox/ and never sends anything; say so when you use it, and say where the draft landed.`;
+You can also draft an email with draft_email. It writes a file to outbox/ and never sends anything; say so when you use it, and say where the draft landed.
+
+ABLETON LIVE
+You can see and control the artist's Ableton Live session with the get_live_* and live_* tools. Session state always comes from those tools, never from memory files or guesses: when the conversation turns to what's in Ableton, call get_live_overview first. You are a collaborator: when the artist asks for musical material ("give me a bass line there"), make it (create the clip if needed, write the notes, say what you wrote). Edit only when asked or clearly implied, never on your own initiative. Before anything destructive (deleting a clip, replacing or clearing notes), confirm out loud and wait for a yes. After any edit, say exactly what changed; if it was wrong, live_transport undo reverses it. If Live isn't reachable, say so plainly and move on.`;
 
 function readTemplateSource(id: string) {
   if (!TEMPLATE_ID.test(id)) throw new Error("Unknown session mode.");
@@ -105,7 +109,19 @@ function readOrEmpty(filePath: string) {
   }
 }
 
-export function buildSystemInstruction(modeId: string, assistantName: string) {
+async function abletonDigest() {
+  const host = currentAbletonHost();
+  const where = host === "127.0.0.1" ? "this machine" : host;
+  const probe = await probeHost(host);
+  return probe.reachable
+    ? `Live ${probe.version ?? ""} is open and answering on ${where}. The get_live_* tools work right now.`.replace(
+        /\s+/g,
+        " ",
+      )
+    : `Live is NOT currently reachable on ${where} (closed, or the AbletonOSC control surface is off). The Live tools will return errors until that changes; the artist can pick a different machine in the app's Ableton panel.`;
+}
+
+export async function buildSystemInstruction(modeId: string, assistantName: string) {
   const base = readOrEmpty(VOICE_PROMPT_PATH);
   const workingSelf = readOrEmpty(WORKING_SELF_PATH);
   const purpose = modePurpose(modeId, assistantName);
@@ -115,6 +131,7 @@ export function buildSystemInstruction(modeId: string, assistantName: string) {
     workingSelf ? `## Working self (current state)\n\n${workingSelf}` : "",
     `## Board right now\n\n${boardDigest()}`,
     `## Outreach right now\n\n${contactsDigest()}`,
+    `## Ableton right now\n\n${await abletonDigest()}`,
     purpose ? `## This session's purpose\n\n${purpose}` : "",
     RETRIEVAL_POLICY,
   ]
@@ -122,7 +139,7 @@ export function buildSystemInstruction(modeId: string, assistantName: string) {
     .join("\n\n");
 }
 
-export function buildSetupMessage(modeId: string, assistantName: string) {
+export async function buildSetupMessage(modeId: string, assistantName: string) {
   return {
     model: LIVE_MODEL,
     generationConfig: {
@@ -131,7 +148,7 @@ export function buildSetupMessage(modeId: string, assistantName: string) {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } },
       },
     },
-    systemInstruction: { parts: [{ text: buildSystemInstruction(modeId, assistantName) }] },
+    systemInstruction: { parts: [{ text: await buildSystemInstruction(modeId, assistantName) }] },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     tools: [{ googleSearch: {} }, { functionDeclarations: FUNCTION_DECLARATIONS }],

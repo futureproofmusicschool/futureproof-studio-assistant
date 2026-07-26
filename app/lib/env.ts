@@ -39,3 +39,25 @@ export function readGeminiApiKey() {
     return "";
   }
 }
+
+/**
+ * Save the Gemini API key into the repo-root .env (gitignored), replacing any
+ * existing GEMINI_API_KEY line. Called from the app's setup screen so a new
+ * user never has to open a dotfile. The key is written, never echoed back.
+ */
+export function writeGeminiApiKey(key: string) {
+  const clean = key.trim();
+  if (!clean || /\s/.test(clean)) throw new Error("That doesn't look like an API key.");
+
+  let source = "";
+  try {
+    source = fs.readFileSync(ENV_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const lines = source.split(/\r?\n/).filter((line) => !/^(?:export\s+)?GEMINI_API_KEY\s*=/.test(line));
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  lines.push(`GEMINI_API_KEY=${clean}`);
+  fs.writeFileSync(ENV_PATH, `${lines.join("\n")}\n`);
+}

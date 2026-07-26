@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { AbletonChip, AbletonPanel } from "@/components/AbletonPanel";
+import { SetupPanel } from "@/components/SetupPanel";
 import { TOOL_SPEAKER, useGeminiLive, type EndedSession } from "@/hooks/useGeminiLive";
 import type { TalkMode } from "@/lib/talk";
 
@@ -106,6 +108,7 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
             <span className="talk-mic-fill" style={{ transform: `scaleX(${Math.max(0.02, micLevel)})` }} />
           </span>
           <span className="talk-mode-chip">{activeMode?.name}</span>
+          <AbletonChip />
           <button
             className="talk-mute-button"
             data-muted={muted ? "true" : "false"}
@@ -191,6 +194,7 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
         </>
       ) : (
         <div className="talk-setup">
+          <SetupPanel />
           {ended ? (
             <div className="talk-ended">
               <h2>Session ended</h2>
@@ -234,9 +238,11 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
           <button className="talk-start-button" onClick={() => void start()} type="button">
             {ended ? "Start another session" : "Start talking"}
           </button>
+          <AbletonPanel />
           <p className="talk-setup-note">
-            Your microphone opens when the session connects. {assistantName} can search the web and read your studio
-            files, and can write an email draft, but never sends anything.
+            Your microphone opens when the session connects. {assistantName} can search the web, read your studio
+            files, and see and control Ableton Live, but edits your session only when you ask, and never sends
+            anything anywhere.
           </p>
         </div>
       )}
