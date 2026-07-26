@@ -30,6 +30,13 @@ type FunctionCall = { id?: string; name?: string; args?: unknown };
 const CAPTURE_RATE = 16000;
 const PLAYBACK_RATE = 24000;
 
+// Auto-hang-up: end the session after this much conversational silence (no
+// speech either way, no typed turns, no tool calls). Mic level deliberately
+// does not count as activity, so room noise or a playing instrument cannot
+// hold a session open forever.
+const IDLE_LIMIT_MS = 5 * 60_000;
+const IDLE_WARNING_MS = 60_000;
+
 // Ported verbatim from voice/public/app.js: known-good against this model.
 const workletSource = `
 class PcmRecorder extends AudioWorkletProcessor {
@@ -123,13 +130,22 @@ async function parseSocketMessage(data: unknown) {
   return JSON.parse(new TextDecoder().decode(data as ArrayBuffer)) as Record<string, unknown>;
 }
 
-export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string; assistantLabel: string }) {
+export function useGeminiLive({
+  userLabel,
+  assistantLabel,
+  onAutoEnd,
+}: {
+  userLabel: string;
+  assistantLabel: string;
+  onAutoEnd?: (result: EndedSession) => void;
+}) {
   const [status, setStatus] = useState<TalkStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<TalkTurn[]>([]);
   const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
   const [micLevel, setMicLevel] = useState(0);
   const [muted, setMutedState] = useState(false);
+  const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const captureContextRef = useRef<AudioContext | null>(null);
@@ -145,10 +161,14 @@ export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string
   const nextTurnId = useRef(0);
   const savingRef = useRef(false);
   const closingRef = useRef(false);
+  const lastActivityRef = useRef(0);
+  const onAutoEndRef = useRef(onAutoEnd);
+  onAutoEndRef.current = onAutoEnd;
 
   const appendFragment = useCallback((speaker: string, text: string | undefined) => {
     if (typeof text !== "string" || text.length === 0) return;
 
+    lastActivityRef.current = Date.now();
     const current = turnsRef.current[turnsRef.current.length - 1];
     if (current && current.speaker === speaker && !current.typed) {
       current.text += text;
@@ -161,6 +181,7 @@ export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string
   }, []);
 
   const appendWholeTurn = useCallback((speaker: string, text: string) => {
+    lastActivityRef.current = Date.now();
     nextTurnId.current += 1;
     turnsRef.current = [...turnsRef.current, { id: nextTurnId.current, speaker, text, typed: true }];
     setTurns(turnsRef.current);
@@ -342,6 +363,7 @@ export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string
       if (message.setupComplete !== undefined) {
         try {
           await startMicrophone();
+          lastActivityRef.current = Date.now();
           setStatus("live");
         } catch (caught) {
           setError(caught instanceof Error ? caught.message : "Microphone access failed.");
@@ -488,6 +510,36 @@ export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string
     if (next) playerRef.current?.stop();
   }, []);
 
+  const stayAlive = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    setIdleSecondsLeft(null);
+  }, []);
+
+  // Auto-hang-up on conversational silence, with a visible countdown for the
+  // last minute. Ends through the same path as the End button, so the
+  // transcript is saved and the view gets the usual session summary.
+  useEffect(() => {
+    if (status !== "live") {
+      setIdleSecondsLeft(null);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      if (closingRef.current) return;
+
+      const remaining = IDLE_LIMIT_MS - (Date.now() - lastActivityRef.current);
+      if (remaining <= 0) {
+        window.clearInterval(timer);
+        setIdleSecondsLeft(null);
+        void disconnect().then((result) => onAutoEndRef.current?.(result));
+        return;
+      }
+      setIdleSecondsLeft(remaining <= IDLE_WARNING_MS ? Math.ceil(remaining / 1000) : null);
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [disconnect, status]);
+
   // A closed tab must not lose the conversation.
   useEffect(() => {
     const flush = () => {
@@ -511,6 +563,8 @@ export function useGeminiLive({ userLabel, assistantLabel }: { userLabel: string
     micLevel,
     muted,
     setMuted,
+    idleSecondsLeft,
+    stayAlive,
     connect,
     disconnect,
     sendText,

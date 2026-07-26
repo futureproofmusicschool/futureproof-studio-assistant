@@ -89,6 +89,7 @@ Voice lives in the app's Talk tab (`/talk`, port 3017), backed by Gemini Live. O
 - **The voice agent's tools:** `googleSearch` (native), `search_studio_files` and `read_studio_file` (read-only, whitelisted to memory, plans, transcripts, templates, `.claude/rules`, the board, contacts, and the soul document), and `draft_email`. The board and contacts are readable by voice but not writable.
 - **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` after a session and say what is waiting.
 - **Transcripts** land in `voice/transcripts/YYYY-MM-DD-HHMMSS.md`, including typed turns and `**Tool:**` markers. Filing them into memory is the CLI assistant's job.
+- **Sessions hang up on their own after 5 quiet minutes** (no speech, typing, or tool calls; mic level doesn't count), with a 60-second countdown and a "Keep it open" button. The transcript still saves. This caps Live-session cost when a session is left open.
 
 ## Studio Context
 

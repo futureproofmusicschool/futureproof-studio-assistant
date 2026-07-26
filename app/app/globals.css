@@ -1250,6 +1250,31 @@ kbd {
   opacity: 0.5;
 }
 
+.talk-idle-warning {
+  align-items: center;
+  background: #2a2417;
+  border: 1px solid #57492a;
+  border-radius: 7px;
+  color: #e6d3a3;
+  display: flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+}
+
+.talk-idle-warning button {
+  background: transparent;
+  border: 1px solid #57492a;
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
 .talk-stream {
   display: flex;
   flex: 1 1 auto;
@@ -1403,6 +1428,10 @@ kbd {
 
 .talk-ended-mode {
   font-size: 12px;
+}
+
+.talk-ended-auto {
+  color: #e6d3a3;
 }
 
 .talk-drafts {

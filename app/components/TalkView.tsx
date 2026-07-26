@@ -27,16 +27,22 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
     micLevel,
     muted,
     setMuted,
+    idleSecondsLeft,
+    stayAlive,
     connect,
     disconnect,
     sendText,
     clearError,
-  } = useGeminiLive({ userLabel: userName, assistantLabel: assistantName });
+  } = useGeminiLive({
+    userLabel: userName,
+    assistantLabel: assistantName,
+    onAutoEnd: (result) => setEnded({ ...result, mode: activeMode?.name ?? modeId, auto: true }),
+  });
 
   const [modeId, setModeId] = useState(modes[0]?.id ?? "open");
   const [draft, setDraft] = useState("");
   const [ending, setEnding] = useState(false);
-  const [ended, setEnded] = useState<(EndedSession & { mode: string }) | null>(null);
+  const [ended, setEnded] = useState<(EndedSession & { mode: string; auto?: boolean }) | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
 
@@ -114,6 +120,15 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
         </div>
       ) : null}
 
+      {live && idleSecondsLeft !== null ? (
+        <div className="talk-idle-warning" role="status">
+          <span>Quiet for a while. Hanging up in {idleSecondsLeft}s.</span>
+          <button onClick={stayAlive} type="button">
+            Keep it open
+          </button>
+        </div>
+      ) : null}
+
       {live ? (
         <>
           <div
@@ -179,6 +194,7 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
           {ended ? (
             <div className="talk-ended">
               <h2>Session ended</h2>
+              {ended.auto ? <p className="talk-ended-auto">Hung up after five quiet minutes.</p> : null}
               <p>
                 {ended.savedPath
                   ? `Transcript saved: ${ended.savedPath}`
