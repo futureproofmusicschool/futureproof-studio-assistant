@@ -4,9 +4,13 @@
     {
       "name": "studio-app",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "app",
-      "port": 3017
+      "port": 3017,
+      "autoPort": false
     }
   ]
 }

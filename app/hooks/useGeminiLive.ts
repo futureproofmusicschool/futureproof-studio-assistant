@@ -23,6 +23,10 @@ export type TalkStatus = "idle" | "connecting" | "live" | "ended" | "error";
 export type EndedSession = {
   savedPath: string | null;
   drafts: string[];
+  /** The bookkeeper wrote this session into memory before the request returned. */
+  filed: boolean;
+  /** It is still filing in the background; the answer just took longer than the wait. */
+  filing: boolean;
 };
 
 type FunctionCall = { id?: string; name?: string; args?: unknown };
@@ -211,12 +215,17 @@ export function useGeminiLive({
     setMicLevel(0);
   }, []);
 
-  const saveTranscript = useCallback(async () => {
-    if (savingRef.current) return null;
+  const saveTranscript = useCallback(async (): Promise<{
+    path: string | null;
+    filed: boolean;
+    filing: boolean;
+  }> => {
+    const nothingSaved = { path: null, filed: false, filing: false };
+    if (savingRef.current) return nothingSaved;
     savingRef.current = true;
 
     const payload = turnsRef.current.map((turn) => ({ speaker: turn.speaker, text: turn.text }));
-    if (payload.length === 0) return null;
+    if (payload.length === 0) return nothingSaved;
 
     try {
       const response = await fetch("/api/talk/transcripts", {
@@ -224,12 +233,17 @@ export function useGeminiLive({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ turns: payload }),
       });
-      const body = (await response.json()) as { path?: string | null; error?: string };
+      const body = (await response.json()) as {
+        path?: string | null;
+        filed?: boolean;
+        filing?: boolean;
+        error?: string;
+      };
       if (!response.ok) throw new Error(body.error || "Could not save the transcript.");
-      return body.path ?? null;
+      return { path: body.path ?? null, filed: Boolean(body.filed), filing: Boolean(body.filing) };
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not save the transcript.");
-      return null;
+      return nothingSaved;
     }
   }, []);
 
@@ -482,9 +496,9 @@ export function useGeminiLive({
     socketRef.current = null;
     teardownAudio();
 
-    const savedPath = await saveTranscript();
+    const saved = await saveTranscript();
     setStatus("ended");
-    return { savedPath, drafts: draftsRef.current };
+    return { savedPath: saved.path, filed: saved.filed, filing: saved.filing, drafts: draftsRef.current };
   }, [saveTranscript, teardownAudio]);
 
   const sendText = useCallback(

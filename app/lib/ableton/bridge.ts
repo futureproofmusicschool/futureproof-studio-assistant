@@ -1,6 +1,8 @@
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
+import fs from "node:fs";
 import { readPacket, writePacket, type OscArg } from "osc";
+import { repoPath } from "@/lib/paths";
 import { readSettings } from "@/lib/settings";
 
 /**
@@ -83,12 +85,55 @@ function toOscArgs(args: (string | number | boolean)[]): OscArg[] {
   });
 }
 
+/**
+ * Last known IP for each hostname, on disk so it survives restarts.
+ *
+ * A ".local" name is resolved by mDNS, and mDNS is granted per launching
+ * process tree by macOS Local Network permission. Launch the server from a
+ * process that was never granted it and resolution fails silently: no error
+ * anyone sees, just "Ableton isn't reachable" for a machine that is sitting
+ * right there answering on 11000. Caching the address means one successful
+ * resolution keeps that machine reachable afterwards, whatever launched us.
+ *
+ * The hostname stays the identity because it survives DHCP moving the address;
+ * the cache is only the fallback. Both failing at once (name unresolvable AND
+ * the lease moved) still needs a rescan or a hand-typed address.
+ */
+const HOST_CACHE_FILE = "ableton-hosts.json";
+
+function readHostCache(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(repoPath(HOST_CACHE_FILE), "utf8"));
+    if (!parsed || typeof parsed !== "object") return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function rememberHost(host: string, ip: string): void {
+  const cache = readHostCache();
+  if (cache[host] === ip) return;
+  try {
+    fs.writeFileSync(repoPath(HOST_CACHE_FILE), `${JSON.stringify({ ...cache, [host]: ip }, null, 2)}\n`);
+  } catch {
+    // A read-only checkout must not break Ableton control.
+  }
+}
+
 async function resolveHost(host: string): Promise<string> {
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
   try {
     const { address } = await dns.lookup(host, { family: 4 });
+    rememberHost(host, address);
     return address;
   } catch {
+    const cached = readHostCache()[host];
+    if (cached) return cached;
     throw new Error(`Can't resolve "${host}" on the network. Check the machine name in Ableton settings.`);
   }
 }

@@ -112,7 +112,7 @@ class TrackHandler(AbletonOSCHandler):
             """Copy a session clip onto the arrangement timeline.
             Args: clip_index (session slot), destination_time (beats).
             Replies with the destination time as an ack.
-            (TEO addition, not in upstream AbletonOSC.)"""
+            (Studio Assistant addition, not in upstream AbletonOSC.)"""
             clip_index, destination_time = params
             clip_slot = track.clip_slots[int(clip_index)]
             if clip_slot.clip is None:

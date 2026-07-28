@@ -31,9 +31,9 @@ export function parseEnv(source: string) {
   return values;
 }
 
-export function readGeminiApiKey() {
+function readEnvValue(name: string) {
   try {
-    return parseEnv(fs.readFileSync(ENV_PATH, "utf8")).GEMINI_API_KEY || "";
+    return parseEnv(fs.readFileSync(ENV_PATH, "utf8"))[name] || "";
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return "";
@@ -41,12 +41,12 @@ export function readGeminiApiKey() {
 }
 
 /**
- * Save the Gemini API key into the repo-root .env (gitignored), replacing any
- * existing GEMINI_API_KEY line. Called from the app's setup screen so a new
- * user never has to open a dotfile. The key is written, never echoed back.
+ * Save one key into the repo-root .env (gitignored), replacing any existing
+ * line for it. Called from the app's setup screen so a new user never has to
+ * open a dotfile. Keys are written, never echoed back.
  */
-export function writeGeminiApiKey(key: string) {
-  const clean = key.trim();
+function writeEnvValue(name: string, value: string) {
+  const clean = value.trim();
   if (!clean || /\s/.test(clean)) throw new Error("That doesn't look like an API key.");
 
   let source = "";
@@ -56,8 +56,26 @@ export function writeGeminiApiKey(key: string) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 
-  const lines = source.split(/\r?\n/).filter((line) => !/^(?:export\s+)?GEMINI_API_KEY\s*=/.test(line));
+  const pattern = new RegExp(`^(?:export\\s+)?${name}\\s*=`);
+  const lines = source.split(/\r?\n/).filter((line) => !pattern.test(line));
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-  lines.push(`GEMINI_API_KEY=${clean}`);
+  lines.push(`${name}=${clean}`);
   fs.writeFileSync(ENV_PATH, `${lines.join("\n")}\n`);
+}
+
+export function readGeminiApiKey() {
+  return readEnvValue("GEMINI_API_KEY");
+}
+
+export function writeGeminiApiKey(key: string) {
+  writeEnvValue("GEMINI_API_KEY", key);
+}
+
+/** Only needed for the anthropic-api composer backend; never the student default. */
+export function readAnthropicApiKey() {
+  return readEnvValue("ANTHROPIC_API_KEY");
+}
+
+export function writeAnthropicApiKey(key: string) {
+  writeEnvValue("ANTHROPIC_API_KEY", key);
 }

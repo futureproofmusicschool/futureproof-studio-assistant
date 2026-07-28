@@ -136,6 +136,124 @@ button {
   transform: scaleX(1);
 }
 
+.app-header-status {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-self: end;
+  min-width: 0;
+}
+
+.working-indicator {
+  align-items: center;
+  color: var(--accent);
+  display: flex;
+  font-size: 11px;
+  font-weight: 650;
+  gap: 8px;
+  letter-spacing: 0.06em;
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  white-space: nowrap;
+}
+
+.working-indicator[data-on="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.working-spinner {
+  animation: working-spin 720ms linear infinite;
+  animation-play-state: paused;
+  border: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  flex: 0 0 auto;
+  height: 12px;
+  width: 12px;
+}
+
+.working-indicator[data-on="true"] .working-spinner {
+  animation-play-state: running;
+}
+
+.working-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.working-label::after {
+  content: "...";
+}
+
+@keyframes working-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.working-dots {
+  align-items: center;
+  display: inline-flex;
+  gap: 7px;
+}
+
+.working-dots > span {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.working-dots i {
+  animation: working-bounce 1.05s ease-in-out infinite;
+  background: currentColor;
+  border-radius: 50%;
+  display: block;
+  height: 4px;
+  width: 4px;
+}
+
+.working-dots i:nth-child(2) {
+  animation-delay: 150ms;
+}
+
+.working-dots i:nth-child(3) {
+  animation-delay: 300ms;
+}
+
+@keyframes working-bounce {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes working-fade {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-spinner,
+  .working-dots i {
+    animation-duration: 1.4s;
+    animation-name: working-fade;
+    animation-timing-function: ease-in-out;
+  }
+}
+
 .local-status {
   align-items: center;
   color: var(--text-muted);
@@ -143,7 +261,6 @@ button {
   font-size: 11px;
   font-weight: 650;
   gap: 7px;
-  justify-self: end;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -853,6 +970,13 @@ kbd {
 
   .assistant-name {
     grid-column: 1;
+    justify-self: start;
+  }
+
+  /* Share the first row with the name instead of adding a third row. */
+  .app-header-status {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .tab-nav {
@@ -1385,6 +1509,148 @@ kbd {
   margin: 0 0 8px;
 }
 
+.composer-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.composer-panel-summary {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.composer-chip {
+  align-items: center;
+  color: var(--text-muted);
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  gap: 7px;
+}
+
+.composer-chip > span {
+  background: #68ad79;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 7px;
+  width: 7px;
+}
+
+.composer-chip[data-warn="true"] > span {
+  background: #d9a441;
+}
+
+.composer-panel-summary button,
+.composer-panel-key button {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+}
+
+.composer-panel-summary button:disabled,
+.composer-panel-key button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.composer-panel-body {
+  margin-top: 12px;
+}
+
+.composer-panel-body ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.composer-panel-body li button {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.composer-panel-body li button[data-current="true"] {
+  border-color: var(--accent);
+}
+
+.composer-option-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-option-blurb {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.composer-panel-key {
+  display: flex;
+  gap: 8px;
+}
+
+.composer-panel-key input {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  flex: 1 1 auto;
+  font-size: 12px;
+  padding: 7px 10px;
+}
+
+.composer-panel-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 10px 0 0;
+}
+
+.composer-panel-warning {
+  color: #e6d3a3;
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+
+.composer-panel-error {
+  color: #f0b3b3;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.reference-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.reference-panel .composer-chip > span {
+  background: var(--line-strong);
+}
+
+.reference-panel-hint {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 8px 0 0;
+}
+
 .talk-idle-warning {
   align-items: center;
   background: #2a2417;
@@ -1474,9 +1740,35 @@ kbd {
 .talk-tool-chip span {
   background: var(--accent);
   border-radius: 2px;
+  flex: 0 0 auto;
   height: 8px;
   transform: rotate(45deg);
   width: 8px;
+}
+
+.talk-tool-chip[data-running="true"] {
+  color: var(--text);
+}
+
+.talk-tool-chip[data-running="true"] span {
+  animation: talk-tool-spin 1.4s ease-in-out infinite;
+}
+
+@keyframes talk-tool-spin {
+  0% {
+    opacity: 0.35;
+    transform: rotate(45deg) scale(0.85);
+  }
+
+  50% {
+    opacity: 1;
+    transform: rotate(225deg) scale(1.1);
+  }
+
+  100% {
+    opacity: 0.35;
+    transform: rotate(405deg) scale(0.85);
+  }
 }
 
 .talk-composer-shell {
@@ -1562,6 +1854,11 @@ kbd {
 }
 
 .talk-ended-mode {
+  font-size: 12px;
+}
+
+.talk-ended-filed {
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -1728,4 +2025,224 @@ kbd {
 
 .setup-panel-error {
   color: #f0b3b3;
+}
+
+/* Settings tab: identity, API access, Ableton, composer, and reference shelf. */
+
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0 auto;
+  max-width: 980px;
+  min-height: 0;
+  padding: 0 28px;
+}
+
+.settings-heading {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 24px;
+  justify-content: space-between;
+  padding: 28px 0 20px;
+}
+
+.settings-heading h1 {
+  font-size: clamp(27px, 3vw, 36px);
+  font-weight: 670;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 0;
+}
+
+.settings-heading > p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 3px;
+  max-width: 380px;
+  text-align: right;
+}
+
+.settings-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 28px;
+}
+
+.settings-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.settings-block h2 {
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+
+.settings-block-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-width: 640px;
+}
+
+/* These panels drew their own top rule when they sat under the Talk screen;
+   inside a settings block the block itself is the boundary. */
+.settings-block .ableton-panel,
+.settings-block .composer-panel,
+.settings-block .reference-panel {
+  border-top: 0;
+  margin-top: 10px;
+  padding-top: 0;
+}
+
+.settings-error {
+  color: #f0b3b3;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.settings-fields {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.settings-fields label {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-fields label span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-fields input {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.settings-fields button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+.settings-fields button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.api-key-panel {
+  margin-top: 12px;
+}
+
+.api-key-status {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.api-key-saved {
+  color: #8fc99d;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.api-key-entry {
+  align-items: flex-end;
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.api-key-entry label {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.api-key-entry label > span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.api-key-entry input {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.api-key-entry button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+.api-key-entry button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.api-key-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 9px 0 0;
+}
+
+.api-key-note code {
+  color: var(--text);
+  font-size: 0.95em;
+}
+
+@media (max-width: 620px) {
+  .api-key-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .api-key-entry button {
+    align-self: flex-start;
+  }
 }

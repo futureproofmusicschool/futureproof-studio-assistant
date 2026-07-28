@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AbletonChip, AbletonPanel } from "@/components/AbletonPanel";
+import { AbletonChip } from "@/components/AbletonPanel";
 import { SetupPanel } from "@/components/SetupPanel";
+import { WorkingDots } from "@/components/Working";
 import { TOOL_SPEAKER, useGeminiLive, type EndedSession } from "@/hooks/useGeminiLive";
 import type { TalkMode } from "@/lib/talk";
 
@@ -50,6 +51,11 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
 
   const activeMode = modes.find((mode) => mode.id === modeId);
   const live = status === "live" || status === "connecting";
+  // The chip text the hook writes for a tool call, so a chip can pulse while
+  // its call is still running and go quiet once it settles.
+  const runningTools = new Set(
+    toolActivity.filter((entry) => entry.status === "running").map((entry) => `${entry.name} running`),
+  );
 
   useEffect(() => {
     const element = streamRef.current;
@@ -144,12 +150,20 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
           >
             {turns.length === 0 ? (
               <p className="talk-stream-hint">
-                {status === "connecting" ? "Opening the session..." : "Say something. Both sides show up here as you go."}
+                {status === "connecting" ? (
+                  <WorkingDots label="Opening the session" />
+                ) : (
+                  "Say something. Both sides show up here as you go."
+                )}
               </p>
             ) : null}
             {turns.map((turn) =>
               turn.speaker === TOOL_SPEAKER ? (
-                <p className="talk-tool-chip" key={turn.id}>
+                <p
+                  className="talk-tool-chip"
+                  data-running={runningTools.has(turn.text) ? "true" : "false"}
+                  key={turn.id}
+                >
                   <span aria-hidden="true" />
                   {turn.text}
                 </p>
@@ -185,9 +199,11 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
             </div>
             {toolActivity.length > 0 ? (
               <p className="talk-tool-summary">
-                {toolActivity.filter((entry) => entry.status === "running").length > 0
-                  ? "Working with your files..."
-                  : `${toolActivity.length} tool ${toolActivity.length === 1 ? "call" : "calls"} this session`}
+                {runningTools.size > 0 ? (
+                  <WorkingDots label="Working with your files" />
+                ) : (
+                  `${toolActivity.length} tool ${toolActivity.length === 1 ? "call" : "calls"} this session`
+                )}
               </p>
             ) : null}
           </div>
@@ -204,6 +220,15 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
                   ? `Transcript saved: ${ended.savedPath}`
                   : "Nothing was said, so no transcript was saved."}
               </p>
+              {ended.savedPath ? (
+                <p className="talk-ended-filed">
+                  {ended.filed
+                    ? "Filed into memory."
+                    : ended.filing
+                      ? "Still filing into memory in the background."
+                      : "Could not file it into memory this time; the transcript is safe on disk."}
+                </p>
+              ) : null}
               <p className="talk-ended-mode">Mode: {ended.mode}</p>
               {ended.drafts.length > 0 ? (
                 <div className="talk-drafts">
@@ -238,7 +263,6 @@ export function TalkView({ assistantName, userName, modes }: TalkViewProps) {
           <button className="talk-start-button" onClick={() => void start()} type="button">
             {ended ? "Start another session" : "Start talking"}
           </button>
-          <AbletonPanel />
           <p className="talk-setup-note">
             Your microphone opens when the session connects. {assistantName} can search the web, read your studio
             files, and see and control Ableton Live, but edits your session only when you ask, and never sends

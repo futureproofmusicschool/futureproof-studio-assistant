@@ -91,7 +91,7 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1180,
     height: 820,
-    title: "TEO",
+    title: "Studio Assistant",
     backgroundColor: "#111114",
     webPreferences: {
       contextIsolation: true,
@@ -126,7 +126,7 @@ app.whenReady().then(async () => {
   try {
     await ensureServer();
   } catch (error) {
-    dialog.showErrorBox("TEO", `${error.message}\n\nStart it by hand with: npm run dev --prefix app`);
+    dialog.showErrorBox("Studio Assistant", `${error.message}\n\nStart it by hand with: npm run dev --prefix app`);
     app.quit();
     return;
   }

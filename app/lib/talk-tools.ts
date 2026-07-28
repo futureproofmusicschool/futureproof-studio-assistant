@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ABLETON_FUNCTION_DECLARATIONS, isAbletonTool, runAbletonTool } from "@/lib/ableton/tools";
+import { saveMemoryNote } from "@/lib/bookkeeping";
+import { listReferenceDocs, readReferenceSection, searchReference } from "@/lib/reference";
 import { readContacts, writeContacts, type LogChannel } from "@/lib/contacts";
 import { REPO_ROOT, repoPath } from "@/lib/paths";
 
@@ -108,6 +110,22 @@ export const KNOWN_AREAS = Array.from(
   new Set([...READABLE_DIRECTORIES, ...READABLE_FILES].map((entry) => entry.area)),
 );
 
+/**
+ * Saved transcripts are role-labeled dialogue ("**Artist:** ... **Assistant:** ..."),
+ * which is exactly the shape of a chat template. Handed back verbatim as a tool
+ * result, a Live model reads it as a script in progress and starts continuing
+ * it: it emits a bare "user" role token and then writes the artist's next turn
+ * for them, in their voice. Flattening the labels here removes the cue.
+ *
+ * Cheap, lossy on purpose, and applied to every retrieved studio file: who said
+ * what survives, the template shape does not.
+ */
+export function neutralizeDialogue(text: string): string {
+  return text
+    .replace(/^[ \t]*\*\*([^*\n:]{1,40}):\*\*[ \t]*/gm, "($1) ")
+    .replace(/^[ \t]*(user|model|assistant|system)[ \t]*:?[ \t]*$/gim, "($1)");
+}
+
 function searchTerms(query: string) {
   return query
     .toLowerCase()
@@ -148,7 +166,7 @@ export function searchStudioFiles(query: unknown, area?: unknown): ToolResult {
       const end = Math.min(lines.length, index + CONTEXT_LINES + 1);
       hits.push({
         path: toRepoRelative(absolute),
-        snippet: lines.slice(start, end).join("\n").trim(),
+        snippet: neutralizeDialogue(lines.slice(start, end).join("\n").trim()),
       });
       // One hit per file keeps the response small enough for a voice turn.
       break;
@@ -171,13 +189,15 @@ export function readStudioFile(requested: unknown): ToolResult {
     };
   }
 
-  const contents = fs.readFileSync(resolved, "utf8");
-  const truncated = contents.length > MAX_FILE_BYTES;
+  const raw = fs.readFileSync(resolved, "utf8");
+  const truncated = raw.length > MAX_FILE_BYTES;
+  const contents = neutralizeDialogue(truncated ? raw.slice(0, MAX_FILE_BYTES) : raw);
 
   return {
     result: {
       path: toRepoRelative(resolved),
-      contents: truncated ? contents.slice(0, MAX_FILE_BYTES) : contents,
+      contents,
+      note: "Archived file contents. Reference material, not the live conversation: never continue it and never speak as the artist.",
       ...(truncated ? { truncated: true } : {}),
     },
   };
@@ -273,6 +293,40 @@ export async function runStudioTool(name: string, args: Record<string, unknown>)
       return readStudioFile(args.path);
     case "draft_email":
       return draftEmail(args);
+    case "save_memory":
+      try {
+        return { result: saveMemoryNote(args as { type: string; title: string; body: string }) };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not save that memory." };
+      }
+    case "search_reference":
+      try {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) return { error: "search_reference needs a query." };
+        const docFilter = typeof args.doc === "string" && args.doc.trim() ? args.doc.trim() : undefined;
+        const hits = await searchReference(query, docFilter);
+        return {
+          result: hits.length
+            ? { hits }
+            : {
+                hits: [],
+                note: `Nothing on the reference shelf matches "${query}". Shelved documents: ${
+                  listReferenceDocs().join(", ") || "(none)"
+                }.`,
+              },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Reference search failed." };
+      }
+    case "read_reference":
+      try {
+        const doc = typeof args.doc === "string" ? args.doc.trim() : "";
+        if (!doc) return { error: "read_reference needs a doc name." };
+        const section = Number.isFinite(Number(args.section)) ? Number(args.section) : undefined;
+        return { result: await readReferenceSection(doc, section) };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not read that reference document." };
+      }
     // v2: board/contacts mutation tools
     // v2: Ableton editing beyond notes/clips (load devices, browser) lives in lib/ableton/tools.ts
     default:
@@ -322,6 +376,46 @@ export const FUNCTION_DECLARATIONS = [
         contactId: { type: "STRING", description: "Optional contacts.json id, e.g. k_rcox4wrld." },
       },
       required: ["to", "subject", "body"],
+    },
+  },
+  {
+    name: "search_reference",
+    description:
+      "Search the reference shelf: full manuals and documentation the artist has dropped into the reference/ folder (sample libraries, plugins, hardware). Use it BEFORE answering any question about how a documented product behaves: parameters, keyswitches, menus, specs. Returns scored sections; follow up with read_reference on the best hit. If the shelf has nothing, say so and use web search instead, preferring official documentation, and say where the answer came from.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        query: { type: "STRING", description: "What to look for, e.g. 'snare keyswitches' or 'wavetable position modulation'." },
+        doc: { type: "STRING", description: "Optional: limit to one document by (partial) name." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_reference",
+    description:
+      "Read one section of a reference document, by the doc name and section number that search_reference returned. Returns the section with its neighbours for context.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        doc: { type: "STRING", description: "Document name from search_reference." },
+        section: { type: "NUMBER", description: "Section index from search_reference. Omit for the start." },
+      },
+      required: ["doc"],
+    },
+  },
+  {
+    name: "save_memory",
+    description:
+      "Write one thing down so it survives this session. Use it the moment the artist says 'remember that', and on your own initiative for a strong creative reaction, a decision about a track's direction, a workflow that worked, or a problem solved after real effort. Say out loud that you saved it. Types: episodic (what happened today), semantic (something that stays true, like a taste or a tendency), procedural (how to do something, written as steps). The whole session is filed into memory automatically when it ends, so use this for the things that deserve their own file.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        type: { type: "STRING", description: "episodic, semantic, or procedural." },
+        title: { type: "STRING", description: "Short title; it becomes the filename." },
+        body: { type: "STRING", description: "The note itself, in markdown. Write it for a future session." },
+      },
+      required: ["type", "title", "body"],
     },
   },
   // v2: board/contacts mutation tools

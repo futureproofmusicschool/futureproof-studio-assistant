@@ -1,4 +1,5 @@
 import { ensureLive, oscQuery, oscSend, currentAbletonHost } from "@/lib/ableton/bridge";
+import { composePart, type ComposedNote } from "@/lib/composer";
 
 /**
  * Ableton Live tools for the Talk voice agent, speaking to the vendored
@@ -491,6 +492,96 @@ async function editLiveClipNotes(args: Record<string, unknown>): Promise<unknown
   return { did: action, trackIndex: track, clipIndex: clip, noteCount: Math.floor(flat.length / 5) };
 }
 
+/** Writes notes into an existing MIDI clip in OSC-sized batches. */
+async function writeNotes(track: number, clip: number, notes: ComposedNote[]) {
+  for (let offset = 0; offset < notes.length; offset += MAX_NOTES_PER_EDIT) {
+    const flat: number[] = [];
+    for (const note of notes.slice(offset, offset + MAX_NOTES_PER_EDIT)) {
+      flat.push(note.pitch, note.start_beats, note.duration_beats, note.velocity, 0);
+    }
+    await oscSend("/live/clip/add/notes", [track, clip, ...flat]);
+  }
+}
+
+/**
+ * The collaborator move: the artist describes a part in conversation, a
+ * frontier model writes it, and it lands in Live. The voice model does not
+ * write the notes itself; it passes the brief to the composer seam so the
+ * writing model can be swapped without touching the voice layer.
+ */
+async function composeMidiPart(args: Record<string, unknown>): Promise<unknown> {
+  await ensureLive();
+  const track = requireInt(args, "track_index");
+  const clip = requireInt(args, "clip_index");
+  const brief = str(args.brief).trim();
+  if (!brief) throw new Error("compose_midi_part needs a brief describing the part.");
+
+  const lengthBeats = requireNumber(args, "length_beats");
+  if (lengthBeats <= 0) throw new Error("length_beats must be positive.");
+  const replace = bool(args.replace) || args.replace === "true";
+  const instrument = str(args.instrument).trim() || undefined;
+  const style = str(args.style).trim() || undefined;
+
+  const [, , hasClip] = await oscQuery("/live/clip_slot/get/has_clip", [track, clip]);
+  let created = false;
+  if (!bool(hasClip)) {
+    await oscSend("/live/clip_slot/create_clip", [track, clip, lengthBeats]);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    created = true;
+  } else {
+    const [, , isMidi] = await oscQuery("/live/clip/get/is_midi_clip", [track, clip]);
+    if (!bool(isMidi)) throw new Error(`Track ${track} clip ${clip} is an audio clip; MIDI can't be written to it.`);
+  }
+
+  const [tempo] = await oscQuery("/live/song/get/tempo");
+  const [sigNum] = await oscQuery("/live/song/get/signature_numerator");
+  const [sigDen] = await oscQuery("/live/song/get/signature_denominator");
+
+  // Existing notes are context for a revision, not for a fresh part.
+  let existingNotes: ComposedNote[] | undefined;
+  if (!created && !replace) {
+    const [, , ...flat] = await oscQuery("/live/clip/get/notes", [track, clip], { timeoutMs: 3000 });
+    const collected: ComposedNote[] = [];
+    for (let offset = 0; offset + 4 < flat.length; offset += 5) {
+      collected.push({
+        pitch: num(flat[offset]),
+        start_beats: num(flat[offset + 1]),
+        duration_beats: num(flat[offset + 2]),
+        velocity: num(flat[offset + 3]),
+      });
+    }
+    if (collected.length > 0) existingNotes = collected;
+  }
+
+  const composed = await composePart({
+    brief,
+    lengthBeats,
+    tempo: num(tempo),
+    timeSignature: `${num(sigNum)}/${num(sigDen)}`,
+    instrument,
+    style,
+    existingNotes,
+  });
+
+  // A revision returns the complete part, so clearing first is how it lands.
+  if (replace || existingNotes) await oscSend("/live/clip/remove/notes", [track, clip]);
+  await writeNotes(track, clip, composed.notes);
+
+  const [, , ...after] = await oscQuery("/live/clip/get/notes", [track, clip], { timeoutMs: 3000 });
+  return {
+    trackIndex: track,
+    clipIndex: clip,
+    createdClip: created,
+    wrote: composed.notes.length,
+    noteCount: Math.floor(after.length / 5),
+    explanation: composed.explanation,
+    backend: composed.backend,
+    model: composed.model,
+    style,
+    ...(instrument ? { instrument } : {}),
+  };
+}
+
 async function createLiveTrack(args: Record<string, unknown>): Promise<unknown> {
   await ensureLive();
   const type = str(args.type);
@@ -566,6 +657,7 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<unknow
   set_live_track: setLiveTrack,
   live_clip_slot: liveClipSlot,
   edit_live_clip_notes: editLiveClipNotes,
+  compose_midi_part: composeMidiPart,
   create_live_track: createLiveTrack,
   set_live_device_parameter: setLiveDeviceParameter,
   arrange_live_clip: arrangeLiveClip,
@@ -731,6 +823,38 @@ export const ABLETON_FUNCTION_DECLARATIONS = [
         },
       },
       required: ["track_index", "clip_index", "action"],
+    },
+  },
+  {
+    name: "compose_midi_part",
+    description:
+      "Write a musical part into a clip. Use this whenever the artist asks for material: a bass line, a percussion groove, an arpeggio, a pad, a fill, a counter-melody. Pass their own words as the brief, plus anything they said about feel, density, or where it should build. It creates the clip when the slot is empty, and takes 20-60 seconds because a frontier model writes the performance. Set replace only after they have confirmed out loud that the existing notes should go; leaving it off treats the clip's contents as a starting point and revises them. For small surgical edits ('make that note longer', 'drop the velocity on the offbeats') use edit_live_clip_notes instead. Afterwards, say the explanation it returns out loud and mention live_transport undo reverses it. Name an instrument doc in the instrument argument when the artist is working with a documented instrument, so articulation keyswitches get used, and a style doc in the style argument when one covers the tradition or instrument being asked for, so the part is idiomatic rather than generic; the session briefing lists which docs exist.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        track_index: { type: "NUMBER", description: "Zero-based track index." },
+        clip_index: { type: "NUMBER", description: "Zero-based clip slot index (scene row)." },
+        brief: {
+          type: "STRING",
+          description:
+            "What to write, in the artist's own words plus relevant feel notes, e.g. 'sparse ride-led groove that builds into fills in the last four bars'.",
+        },
+        length_beats: { type: "NUMBER", description: "Clip length in beats, e.g. 64 for 16 bars of 4/4." },
+        instrument: {
+          type: "STRING",
+          description: "Optional name of an instrument doc in instruments/, for articulation keyswitches.",
+        },
+        style: {
+          type: "STRING",
+          description:
+            "Optional name of a style doc in styles/, describing how the instrument is really played (stroke vocabulary, rhythmic cycles, phrasing). Pass this whenever the artist names a tradition or an instrument a style doc covers; instrument and style are independent and most parts want both.",
+        },
+        replace: {
+          type: "BOOLEAN",
+          description: "Destructive: clears the clip first. Only with the artist's spoken confirmation.",
+        },
+      },
+      required: ["track_index", "clip_index", "brief", "length_beats"],
     },
   },
   {

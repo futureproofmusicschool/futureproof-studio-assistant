@@ -23,7 +23,7 @@ copy_if_missing examples/memory/working-self.md memory/working-self.md
 copy_if_missing examples/memory/episodic/2026-07-17-example-session-log.md memory/episodic/2026-07-17-example-session-log.md
 copy_if_missing examples/memory/semantic/example-taste-note.md memory/semantic/example-taste-note.md
 copy_if_missing examples/memory/procedural/example-export-checklist.md memory/procedural/example-export-checklist.md
-mkdir -p plans voice/transcripts outbox
+mkdir -p plans voice/transcripts outbox instruments reference
 
 if [ ! -f .env ]; then
   printf 'GEMINI_API_KEY=\n' > .env

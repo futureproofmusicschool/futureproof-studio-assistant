@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { WorkingIndicator } from "@/components/Working";
 import type { TabDefinition } from "@/lib/tabs";
 
 type AppShellProps = {
@@ -36,9 +37,12 @@ export function AppShell({ name, tabs, children }: AppShellProps) {
             );
           })}
         </nav>
-        <div className="local-status" title="This app reads local repository files">
-          <span aria-hidden="true" />
-          Local
+        <div className="app-header-status">
+          <WorkingIndicator />
+          <div className="local-status" title="This app reads local repository files">
+            <span aria-hidden="true" />
+            Local
+          </div>
         </div>
       </header>
       <main className="app-main">{children}</main>

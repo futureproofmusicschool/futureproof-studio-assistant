@@ -1,21 +1,37 @@
 .DS_Store
 .env
+.env.*
+!.env.example
+!.env.*.example
 node_modules/
 .next/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
 
 # ---- Personal studio data: never committed. Start from examples/ (scripts/init.sh). ----
 /assistant.json
 /settings.json
+/ableton-hosts.json
 /board/board.json
 /contacts/contacts.json
 /memory/
 /plans/
 /outbox/*
 !/outbox/README.md
+# Instrument docs are usually third-party manual text, and which instruments you
+# own is personal. Only the README and the generic example are tracked.
+/instruments/*
+!/instruments/README.md
+!/instruments/example-percussion.md
+# The reference shelf: manuals are third-party text and what you own is personal.
+/reference/*
+!/reference/README.md
 /voice/prompt.md
 /voice/transcripts/
 /.claude/rules/studio-context.md
 /.claude/rules/*.local.md
 /.claude/skills/
 CLAUDE.local.md
+!/examples/CLAUDE.local.md
 /.git-personal-terms

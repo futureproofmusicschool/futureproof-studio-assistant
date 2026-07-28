@@ -8,6 +8,12 @@ import { readSettings } from "@/lib/settings";
  * browsing Bonjour for common Mac services and then probing every candidate
  * with an AbletonOSC version query. "reachable" means Live is open there with
  * the AbletonOSC control surface enabled; a host can be up without it.
+ *
+ * If this finds nothing but the Macs are clearly on the network, the usual
+ * cause is macOS Local Network permission: mDNS is silently blocked for the
+ * app that launched the server (System Settings > Privacy & Security > Local
+ * Network). No error is raised, the browse just comes back empty. Typing the
+ * hostname by hand still works, because that path never touches mDNS.
  */
 
 export type DiscoveredHost = {
@@ -18,8 +24,10 @@ export type DiscoveredHost = {
   version?: string;
 };
 
-const BROWSE_TYPES = ["ssh", "sftp-ssh", "smb", "rfb", "airplay", "device-info", "companion-link"];
-const BROWSE_MS = 1800;
+const BROWSE_TYPES = ["ssh", "sftp-ssh", "smb", "rfb", "airplay", "device-info", "companion-link", "raop"];
+// 1800ms missed hosts on a cold mDNS cache; this is still under a comfortable
+// wait for a button press.
+const BROWSE_MS = 2500;
 
 function normalize(host: string): string {
   return host.replace(/\.$/, "").toLowerCase();
@@ -37,14 +45,18 @@ export async function discoverAbletonHosts(): Promise<DiscoveredHost[]> {
 
   await new Promise<void>((resolve) => {
     for (const type of BROWSE_TYPES) {
-      bonjour.find({ type }, (service) => {
-        const host = (service.host || "").replace(/\.$/, "");
-        if (!host || isSelf(host)) return;
-        const key = normalize(host);
-        if (!found.has(key)) {
-          found.set(key, { host, name: host.replace(/\.local$/i, "").replace(/-/g, " ") });
-        }
-      });
+      try {
+        bonjour.find({ type }, (service) => {
+          const host = (service.host || "").replace(/\.$/, "");
+          if (!host || isSelf(host)) return;
+          const key = normalize(host);
+          if (!found.has(key)) {
+            found.set(key, { host, name: host.replace(/\.local$/i, "").replace(/-/g, " ") });
+          }
+        });
+      } catch {
+        // One bad service type must not abort the whole browse.
+      }
     }
     setTimeout(resolve, BROWSE_MS);
   });
