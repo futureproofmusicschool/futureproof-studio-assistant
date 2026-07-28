@@ -3,6 +3,7 @@ import { claudeCodeAvailable } from "@/lib/composer";
 import { readAssistantConfig, writeAssistantConfig } from "@/lib/config";
 import { readAnthropicApiKey, readGeminiApiKey, writeAnthropicApiKey, writeGeminiApiKey } from "@/lib/env";
 import { listReferenceDocs } from "@/lib/reference";
+import { DATA_ROOT } from "@/lib/paths";
 import { readSettings, writeSettings, type ComposerBackend } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -19,6 +20,7 @@ async function state() {
     hasAnthropicKey: readAnthropicApiKey().length > 0,
     hasClaudeCode: await claudeCodeAvailable(),
     referenceDocs: listReferenceDocs(),
+    dataDirectory: DATA_ROOT,
   };
 }
 

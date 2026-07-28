@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory, repoPath } from "@/lib/paths";
 
 export type BoardList = {
   id: string;
@@ -32,7 +32,7 @@ export {
   renameBoardList,
 } from "@/lib/board-list-mutations";
 
-const BOARD_PATH = repoPath("board", "board.json");
+const BOARD_PATH = dataPath("board", "board.json");
 const TEMP_PATH = `${BOARD_PATH}.tmp`;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -92,12 +92,20 @@ export function isValidBoard(value: unknown): value is Board {
 }
 
 export function readBoard(): Board {
-  const value: unknown = JSON.parse(fs.readFileSync(BOARD_PATH, "utf8"));
+  let contents: string;
+  try {
+    contents = fs.readFileSync(BOARD_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    contents = fs.readFileSync(repoPath("examples", "board.json"), "utf8");
+  }
+  const value: unknown = JSON.parse(contents);
   if (!isValidBoard(value)) throw new Error("board/board.json is invalid");
   return value;
 }
 
 export function writeBoard(board: Board) {
+  ensureDataDirectory("board");
   fs.writeFileSync(TEMP_PATH, `${JSON.stringify(board, null, 2)}\n`, "utf8");
   fs.renameSync(TEMP_PATH, BOARD_PATH);
 }

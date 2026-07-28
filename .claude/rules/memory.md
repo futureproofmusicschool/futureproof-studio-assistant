@@ -4,7 +4,9 @@ The memory system stores studio knowledge in three types plus a dynamic working 
 
 ## Location
 
-All memories live in `/memory/` with a subdirectory for each type.
+All memories live under `memory/` in the external student-data directory. The
+ignored `/memory/` path in the checkout is a compatibility link to that same
+directory.
 
 ## Working Self
 

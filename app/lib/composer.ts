@@ -12,7 +12,7 @@ import {
   COMPOSER_CLAUDE_MODEL,
   COMPOSER_GEMINI_MODEL,
 } from "@/lib/models";
-import { repoPath } from "@/lib/paths";
+import { dataPath, repoPath } from "@/lib/paths";
 import { readSettings, type ComposerBackend } from "@/lib/settings";
 
 /**
@@ -53,7 +53,7 @@ export type ComposeResult = {
   model: string;
 };
 
-const INSTRUMENTS_DIR = repoPath("instruments");
+const INSTRUMENTS_DIR = dataPath("instruments");
 const STYLES_DIR = repoPath("styles");
 const MAX_NOTES = 1000;
 const MAX_INSTRUMENT_DOC_BYTES = 120 * 1024;

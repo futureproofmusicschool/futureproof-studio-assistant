@@ -10,20 +10,35 @@ Usage:
 List ids come from board.json (workflow lists like today, in-progress, next, done, plus your own backlogs).
 """
 import json
+import os
+import platform
 import sys
 import secrets
 import datetime
 import pathlib
 
-PATH = pathlib.Path(__file__).with_name("board.json")
+
+def data_root():
+    override = os.environ.get("STUDIO_ASSISTANT_DATA_DIR", "").strip()
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+    if platform.system() == "Darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "Futureproof Studio Assistant"
+    if platform.system() == "Windows":
+        return pathlib.Path(os.environ.get("APPDATA", pathlib.Path.home() / "AppData" / "Roaming")) / "Futureproof Studio Assistant"
+    return pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "futureproof-studio-assistant"
+
+
+DATA_FILE = data_root() / "board" / "board.json"
 
 
 def load():
-    return json.loads(PATH.read_text())
+    return json.loads(DATA_FILE.read_text())
 
 
 def save(b):
-    PATH.write_text(json.dumps(b, indent=1, ensure_ascii=False) + "\n")
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DATA_FILE.write_text(json.dumps(b, indent=1, ensure_ascii=False) + "\n")
 
 
 def now():

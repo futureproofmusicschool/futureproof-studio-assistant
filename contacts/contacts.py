@@ -15,11 +15,25 @@ Settable fields: name, role, category, status, haveSamples (true/false), contact
 """
 import datetime
 import json
+import os
 import pathlib
+import platform
 import secrets
 import sys
 
-PATH = pathlib.Path(__file__).with_name("contacts.json")
+
+def data_root():
+    override = os.environ.get("STUDIO_ASSISTANT_DATA_DIR", "").strip()
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+    if platform.system() == "Darwin":
+        return pathlib.Path.home() / "Library" / "Application Support" / "Futureproof Studio Assistant"
+    if platform.system() == "Windows":
+        return pathlib.Path(os.environ.get("APPDATA", pathlib.Path.home() / "AppData" / "Roaming")) / "Futureproof Studio Assistant"
+    return pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "futureproof-studio-assistant"
+
+
+DATA_FILE = data_root() / "contacts" / "contacts.json"
 
 STATUSES = ["to-contact", "contacted", "replied", "confirmed", "declined"]
 CHANNELS = ["email", "call", "dm", "in-person", "other"]
@@ -27,11 +41,12 @@ FIELDS = ["name", "role", "category", "status", "haveSamples", "contact", "notes
 
 
 def load():
-    return json.loads(PATH.read_text())
+    return json.loads(DATA_FILE.read_text())
 
 
 def save(data):
-    PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DATA_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
 def now():

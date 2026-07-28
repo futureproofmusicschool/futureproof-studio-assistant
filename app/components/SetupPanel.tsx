@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 /**
  * First-run card on the Talk screen: shown only while no Gemini API key is
- * saved. The key goes straight into the repo-root .env server-side and is
+ * saved. The key goes straight into the external data .env server-side and is
  * never sent back to the browser.
  */
 export function SetupPanel() {
@@ -56,7 +56,7 @@ export function SetupPanel() {
       <h2>One thing before the first session</h2>
       <p>
         Talking needs a Google Gemini API key (free tier works). Create one at aistudio.google.com, paste it here, and
-        it's saved to the gitignored .env on this machine only.
+        it&apos;s saved in your personal data folder on this machine only.
       </p>
       {error ? <p className="setup-panel-error">{error}</p> : null}
       <div className="setup-panel-row">

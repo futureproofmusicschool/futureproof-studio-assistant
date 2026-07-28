@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoPath } from "@/lib/paths";
+import { dataPath } from "@/lib/paths";
 
 /**
- * The reference shelf: reference/ holds full manuals (PDF, docx, text,
+ * The reference shelf holds full manuals (PDF, docx, text,
  * markdown) that the voice agent searches on demand. Everything is local to
- * the repo: no index to host, no service to run. PDFs and docx files are
- * extracted to a text sidecar in reference/.cache/ the first time they are
+ * the student's external data directory: no index to host, no service to run.
+ * PDFs and docx files are extracted to a text sidecar in reference/.cache/ the first time they are
  * touched, then treated like any other text.
  *
  * This is deliberately not a vector store. At the scale of a shelf of manuals,
@@ -14,7 +14,7 @@ import { repoPath } from "@/lib/paths";
  * enough, and there is nothing to ship, embed, or keep warm.
  */
 
-const REFERENCE_DIR = repoPath("reference");
+const REFERENCE_DIR = dataPath("reference");
 const CACHE_DIR = path.join(REFERENCE_DIR, ".cache");
 
 const EXTRACTABLE = new Set([".pdf", ".docx"]);
@@ -68,7 +68,7 @@ function resolveDoc(requested: string): string {
     throw new Error(
       docs.length
         ? `No reference document matches "${requested}". On the shelf: ${docs.join(", ")}.`
-        : `The reference shelf is empty. Documents go in the reference/ folder of the repo.`,
+        : `The reference shelf is empty. Documents go in the reference/ folder of the student data directory.`,
     );
   }
   return found;

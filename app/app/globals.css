@@ -2184,6 +2184,31 @@ kbd {
   max-width: 640px;
 }
 
+.data-location {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.data-location span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.data-location code {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 /* These panels drew their own top rule when they sat under the Talk screen;
    inside a settings block the block itself is the boundary. */
 .settings-block .ableton-panel,

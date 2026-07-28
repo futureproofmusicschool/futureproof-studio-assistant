@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory, repoPath } from "@/lib/paths";
 
 export const CONTACT_STATUSES = [
   "to-contact",
@@ -48,7 +48,7 @@ export type Contacts = {
   contacts: Contact[];
 };
 
-const CONTACTS_PATH = repoPath("contacts", "contacts.json");
+const CONTACTS_PATH = dataPath("contacts", "contacts.json");
 const TEMP_PATH = `${CONTACTS_PATH}.tmp`;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -132,12 +132,20 @@ export function isValidContacts(value: unknown): value is Contacts {
 }
 
 export function readContacts(): Contacts {
-  const value: unknown = JSON.parse(fs.readFileSync(CONTACTS_PATH, "utf8"));
+  let contents: string;
+  try {
+    contents = fs.readFileSync(CONTACTS_PATH, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    contents = fs.readFileSync(repoPath("examples", "contacts.json"), "utf8");
+  }
+  const value: unknown = JSON.parse(contents);
   if (!isValidContacts(value)) throw new Error("contacts/contacts.json is invalid");
   return value;
 }
 
 export function writeContacts(contacts: Contacts) {
+  ensureDataDirectory("contacts");
   fs.writeFileSync(TEMP_PATH, `${JSON.stringify(contacts, null, 2)}\n`, "utf8");
   fs.renameSync(TEMP_PATH, CONTACTS_PATH);
 }

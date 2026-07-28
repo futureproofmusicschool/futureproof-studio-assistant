@@ -1,8 +1,9 @@
 # instruments/
 
-Documentation for the instruments the composer writes for. One markdown file per
-instrument. The filename (without `.md`) is the name you say out loud: "write me
-a groove on the taiko kit" matches `taiko-kit.md`.
+Documentation for the instruments the composer writes for lives in the external
+student-data directory's `instruments/` folder. Settings shows the data root.
+Use one markdown file per instrument. The filename (without `.md`) is the name
+you say out loud: "write me a groove on the taiko kit" matches `taiko-kit.md`.
 
 When a session names an instrument, **the whole file goes into the composer's
 prompt verbatim**. That is the point: a frontier model reading a real articulation
@@ -37,6 +38,7 @@ sound, the composer will get the notes right and you will draw the curve.
 
 ## Privacy
 
-`instruments/` is gitignored except this README and `example-percussion.md`.
-Sample-library manuals are usually someone else's copyrighted text, and the
-instruments you own are personal data. Keep your real docs local.
+Real instrument docs live outside the Git checkout. Compatibility links may
+appear beside this README, but Git ignores them. Sample-library manuals are
+usually someone else's copyrighted text, and the instruments you own are
+personal data.

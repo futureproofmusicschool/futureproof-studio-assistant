@@ -66,7 +66,7 @@ Help [YOUR NAME] make better music, faster, by being the studio partner who neve
 
 ## Memory System
 
-Knowledge lives in `/memory/`. Read `.claude/rules/memory.md` for the schema. The directory name is retained because Claude Code discovers it automatically; it is shared project guidance, not Claude-only memory.
+Knowledge is physically stored under the external student-data root (macOS default: `~/Library/Application Support/Futureproof Studio Assistant/`). Ignored compatibility links preserve paths such as `/memory/` inside the checkout for Claude Code and Codex. Read `.claude/rules/memory.md` for the schema.
 
 - `memory/working-self.md`: current state (active projects, this week's focus). Read this at the start of any session about ongoing work.
 - `memory/episodic/`: what happened (session logs, decisions, experiments)
@@ -97,7 +97,7 @@ Voice lives in the app's Talk tab (`/talk`, port 3017), backed by Gemini Live. O
 The assistant sees and controls Ableton Live; in Ableton it is a **collaborator, not just an advisor**: on request it creates and edits MIDI clips and places them in the arrangement. The reliable composing loop is build-in-session-view, then `arrange_live_clip` onto the timeline.
 
 - **Transport:** the app's Node server speaks OSC/UDP (out 11000, replies 11001) to the **AbletonOSC Remote Script vendored at `ableton/AbletonOSC/`** (lineage in its `PROVENANCE.md`). Settings can install it on the local Mac; use `scripts/install-abletonosc.sh user@host` for another Mac. Then select AbletonOSC as a Control Surface in Live's preferences. Bridge: `app/lib/ableton/bridge.ts`; tools: `app/lib/ableton/tools.ts` (seven `get_live_*` reads plus `live_transport`, `set_live_track`, `live_clip_slot`, `edit_live_clip_notes`, `compose_midi_part`, `create_live_track`, `set_live_device_parameter`, `arrange_live_clip`).
-- **Which machine:** gitignored repo-root `settings.json` holds `abletonHost` (default this machine). The Settings tab has a picker (Bonjour scan + probe + manual hostname). Works across the LAN; never port-forward 11000/11001 (the socket is unauthenticated).
+- **Which machine:** external `settings.json` holds `abletonHost` (default this machine). The Settings tab has a picker (Bonjour scan + probe + manual hostname). Works across the LAN; never port-forward 11000/11001 (the socket is unauthenticated).
 - **Consent stance (prompt-enforced):** edit only when the artist asks or clearly implies it, confirm out loud before destructive moves, narrate every edit afterward, remind that Live's undo covers tool edits.
 
 ## The composer (who writes the MIDI)
@@ -106,14 +106,14 @@ Writing music and holding a conversation are different jobs, so they run on diff
 
 - **Backends** (`settings.json` → `composer.backend`, picked in the Settings tab's Composer panel): `gemini` (default: Gemini Pro on the same key as voice, so a fresh install needs nothing else), `anthropic-api` (Claude Fable 5 on an `ANTHROPIC_API_KEY` in `.env`), `claude-code` (Claude Fable 5 headless through the local `claude` CLI, against a subscription). Model ids live in `app/lib/models.ts`.
 - **The contract is the same for every backend:** strict JSON `notes: [{pitch, start_beats, duration_beats, velocity}]` plus a spoken `explanation`, validated and clamped server-side, with one retry that tells the model what went wrong. Same shape `edit_live_clip_notes` takes, so nothing has to be translated.
-- **Instrument docs** live in `instruments/` (gitignored except the README and `example-percussion.md`, since library manuals are third-party text). Naming one in `compose_midi_part` puts its whole text into the prompt. **Keyswitches are ordinary notes at their documented pitches**, so articulation control works today.
+- **Instrument docs** live in the external data root's `instruments/` folder; ignored compatibility links may appear beside the tracked README and `example-percussion.md`. Naming one in `compose_midi_part` puts its whole text into the prompt. **Keyswitches are ordinary notes at their documented pitches**, so articulation control works today.
 - **Style docs** live in `styles/` (tracked in git: original research about public traditions, no personal data). Naming one in `compose_midi_part`'s `style` argument puts its whole text into the prompt too. `instrument` and `style` are independent, and most parts want both: the instrument doc says which MIDI note makes which sound in one library, the style doc says what a real player would play. When both are present the prompt tells the composer to map the style's named strokes onto the instrument's pitches and report the mapping it chose. See "The style shelf" below.
 - **No CC curves yet.** AbletonOSC has no clip-envelope handlers, so continuous controller lanes cannot be written from here. That is the second half of "live-sounding" and the obvious next piece of work.
 - **Why a seam and not a hardcoded model:** no published benchmark covers "read a dense articulation doc and write like a player". Switching backends has to be a one-click A/B so the artist's ears decide, not a rewrite.
 
 ## The reference shelf (manuals the assistant can search)
 
-`reference/` (gitignored except its README) holds full manuals — sample libraries, plugins, hardware — as PDF, docx, text, or markdown. Everything is local to the repo: no hosted index, no service, so it works for any user of the public template.
+The external data root's `reference/` folder holds full manuals — sample libraries, plugins, hardware — as PDF, docx, text, or markdown. Everything stays local to the student's machine: no hosted index, no service.
 
 - **Mechanics** (`app/lib/reference.ts`): text is extracted lazily to `reference/.cache/` (pdf-parse / mammoth, keyed by mtime+size), split into sections on markdown headings or the ALL-CAPS headings PDFs leave behind, and searched by scored term matching. `search_reference` returns scored sections; `read_reference` returns one section with its neighbours. Deliberately not a vector store: at shelf scale, section search answers "where does the manual talk about X".
 - **Prompt policy** (in `RETRIEVAL_POLICY`): technical questions about software/gear check the shelf first, fall back to web search preferring official documentation, and always say where the answer came from. Retrieved documentation beats general knowledge.
@@ -142,12 +142,13 @@ Writing music and holding a conversation are different jobs, so they run on diff
 
 `desktop/` wraps the app in an Electron shell. It attaches to port 3017 if the server is already running, otherwise starts `app/server.js` itself (and stops it on quit); mic permission is granted to localhost only. `npm start --prefix desktop` runs it; `npm run pack --prefix desktop` builds a double-clickable app. A packaged app finds the repo via `~/.studio-assistant-desktop.json` (`{"repo": "/path/to/checkout"}`) and logs the server to `~/Library/Logs/studio-assistant-desktop.log`.
 
-## Personal data lives outside git
+## Personal data lives outside the checkout
 
-This is ONE repo for both the public code and the owner's private studio data. The split is enforced by `.gitignore`, not by separate repos:
+Public code lives in this checkout. Student-owned state lives under one external data root (macOS default: `~/Library/Application Support/Futureproof Studio Assistant/`; override with `STUDIO_ASSISTANT_DATA_DIR`):
 
-- **Gitignored (never committed):** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/` drafts, `instruments/` docs, `reference/` manuals, `voice/prompt.md`, `voice/transcripts/`, `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, `.env`.
-- **Tracked:** all code, generic docs, `instruments/README.md` + `instruments/example-percussion.md`, `reference/README.md`, and `examples/` (starter copies of every gitignored file). `scripts/init.sh` copies the examples into place on a fresh clone.
+- **External:** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/`, `instruments/`, `reference/`, `voice/prompt.md`, `voice/transcripts/`, `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, and `.env`.
+- **Compatibility links:** `scripts/init-data.mjs` migrates legacy repo-local data without overwriting it, then creates ignored links at the familiar paths required by coding-client discovery. The app reads the external root directly and does not depend on those links.
+- **Tracked:** all code, generic docs, `instruments/README.md` + `instruments/example-percussion.md`, `reference/README.md`, and `examples/` starter copies.
 - **Rule for agents:** never write a personal fact (names, projects, collaborators, machine paths) into a tracked file. Personal identity and studio facts belong in `CLAUDE.local.md` and the other gitignored files. A pre-commit hook greps staged changes as a seatbelt; treat a hook failure as a real leak, not noise.
 
 ## Studio Context

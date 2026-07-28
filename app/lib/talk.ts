@@ -6,7 +6,7 @@ import { listInstruments, listStyles } from "@/lib/composer";
 import { listReferenceDocs } from "@/lib/reference";
 import { readContacts } from "@/lib/contacts";
 import { COMPOSER_CLAUDE_MODEL, COMPOSER_GEMINI_MODEL } from "@/lib/models";
-import { repoPath } from "@/lib/paths";
+import { dataPath, repoPath } from "@/lib/paths";
 import { readSettings } from "@/lib/settings";
 import { FUNCTION_DECLARATIONS } from "@/lib/talk-tools";
 
@@ -14,9 +14,9 @@ export const LIVE_MODEL = "models/gemini-3.1-flash-live-preview";
 export const LIVE_VOICE = "Algenib";
 
 const TEMPLATES_DIR = repoPath("interviews", "templates");
-export const TRANSCRIPTS_DIR = repoPath("voice", "transcripts");
-const VOICE_PROMPT_PATH = repoPath("voice", "prompt.md");
-const WORKING_SELF_PATH = repoPath("memory", "working-self.md");
+export const TRANSCRIPTS_DIR = dataPath("voice", "transcripts");
+const VOICE_PROMPT_PATH = dataPath("voice", "prompt.md");
+const WORKING_SELF_PATH = dataPath("memory", "working-self.md");
 const TEMPLATE_HEADER = /^<!--\s*title:\s*(.*?)\s*\|\s*desc:\s*(.*?)\s*-->\s*\n?/;
 const TEMPLATE_ID = /^[a-z0-9-]+$/;
 
@@ -164,7 +164,7 @@ export async function buildSystemInstruction(modeId: string, assistantName: stri
     `## Reference shelf\n\n${
       listReferenceDocs().length
         ? `Documents available to search_reference: ${listReferenceDocs().join(", ")}.`
-        : "The reference shelf is empty. If the artist wants manuals searchable, they go in the repo's reference/ folder (PDF, docx, text, or markdown)."
+        : "The reference shelf is empty. If the artist wants manuals searchable, they go in the student data directory's reference/ folder (PDF, docx, text, or markdown)."
     }`,
     purpose ? `## This session's purpose\n\n${purpose}` : "",
     RETRIEVAL_POLICY,

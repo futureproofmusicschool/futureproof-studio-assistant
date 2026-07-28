@@ -2,7 +2,7 @@ import dgram from "node:dgram";
 import dns from "node:dns/promises";
 import fs from "node:fs";
 import { readPacket, writePacket, type OscArg } from "osc";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory } from "@/lib/paths";
 import { readSettings } from "@/lib/settings";
 
 /**
@@ -103,7 +103,7 @@ const HOST_CACHE_FILE = "ableton-hosts.json";
 
 function readHostCache(): Record<string, string> {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(repoPath(HOST_CACHE_FILE), "utf8"));
+    const parsed: unknown = JSON.parse(fs.readFileSync(dataPath(HOST_CACHE_FILE), "utf8"));
     if (!parsed || typeof parsed !== "object") return {};
     return Object.fromEntries(
       Object.entries(parsed as Record<string, unknown>).filter(
@@ -119,7 +119,8 @@ function rememberHost(host: string, ip: string): void {
   const cache = readHostCache();
   if (cache[host] === ip) return;
   try {
-    fs.writeFileSync(repoPath(HOST_CACHE_FILE), `${JSON.stringify({ ...cache, [host]: ip }, null, 2)}\n`);
+    ensureDataDirectory();
+    fs.writeFileSync(dataPath(HOST_CACHE_FILE), `${JSON.stringify({ ...cache, [host]: ip }, null, 2)}\n`);
   } catch {
     // A read-only checkout must not break Ableton control.
   }

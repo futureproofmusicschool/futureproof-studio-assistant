@@ -13,10 +13,10 @@ while IFS= read -r path; do
   case "$path" in
     assistant.json|settings.json|ableton-hosts.json|\
     board/board.json|contacts/contacts.json|\
-    memory/*|plans/*|\
+    memory|memory/*|plans|plans/*|\
     outbox/*|instruments/*|reference/*|\
-    voice/prompt.md|voice/transcripts/*|\
-    .claude/rules/studio-context.md|.claude/rules/*.local.md|.claude/skills/*|\
+    voice/prompt.md|voice/transcripts|voice/transcripts/*|\
+    .claude/rules/studio-context.md|.claude/rules/*.local.md|.claude/skills|.claude/skills/*|\
     CLAUDE.local.md|.git-personal-terms|\
     .env|.env.*|*/.env|*/.env.*)
       case "$path" in

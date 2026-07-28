@@ -1,10 +1,9 @@
 import fs from "node:fs";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory } from "@/lib/paths";
 
 /**
- * Machine-local settings (gitignored, unlike assistant.json): which machine
- * runs Ableton Live, and which model writes MIDI. The file is created on first
- * write.
+ * Machine-local settings in the external student-data directory: which machine
+ * runs Ableton Live, and which model writes MIDI. The file is created on first write.
  */
 
 /** Which brain the composer seam calls. See lib/composer.ts. */
@@ -27,7 +26,7 @@ function isBackend(value: unknown): value is ComposerBackend {
 
 export function readSettings(): StudioSettings {
   try {
-    const parsed = JSON.parse(fs.readFileSync(repoPath(SETTINGS_FILE), "utf8")) as Partial<StudioSettings>;
+    const parsed = JSON.parse(fs.readFileSync(dataPath(SETTINGS_FILE), "utf8")) as Partial<StudioSettings>;
     return {
       abletonHost:
         typeof parsed.abletonHost === "string" && parsed.abletonHost.trim()
@@ -58,6 +57,7 @@ export function writeSettings(update: Partial<StudioSettings>): StudioSettings {
     throw new Error(`composer.backend must be one of ${COMPOSER_BACKENDS.join(", ")}.`);
   }
 
-  fs.writeFileSync(repoPath(SETTINGS_FILE), `${JSON.stringify(next, null, 2)}\n`);
+  ensureDataDirectory();
+  fs.writeFileSync(dataPath(SETTINGS_FILE), `${JSON.stringify(next, null, 2)}\n`);
   return next;
 }

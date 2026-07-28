@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readGeminiApiKey } from "@/lib/env";
 import { BOOKKEEPING_MODEL } from "@/lib/models";
-import { REPO_ROOT, repoPath } from "@/lib/paths";
+import { DATA_ROOT, dataPath, repoPath } from "@/lib/paths";
 
 /**
  * Internal bookkeeping: filing a finished voice session into memory.
@@ -14,7 +14,7 @@ import { REPO_ROOT, repoPath } from "@/lib/paths";
  * stamped `filed-by: gemini-flash` so a human can audit it later.
  */
 
-const MEMORY_DIR = repoPath("memory");
+const MEMORY_DIR = dataPath("memory");
 const EPISODIC_DIR = path.join(MEMORY_DIR, "episodic");
 const SEMANTIC_DIR = path.join(MEMORY_DIR, "semantic");
 const PROCEDURAL_DIR = path.join(MEMORY_DIR, "procedural");
@@ -49,8 +49,8 @@ function slugify(value: string) {
   );
 }
 
-function toRepoRelative(absolutePath: string) {
-  return path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
+function toDataRelative(absolutePath: string) {
+  return path.relative(DATA_ROOT, absolutePath).split(path.sep).join("/");
 }
 
 function dayStamp(date: Date) {
@@ -113,7 +113,7 @@ export function saveMemoryNote(args: { type: string; title: string; body: string
 
   const target = uniquePath(DIRECTORY_FOR[type], filename);
   fs.writeFileSync(target, `${frontmatter}# ${title}\n\n${body}\n`, "utf8");
-  return { path: toRepoRelative(target), type };
+  return { path: toDataRelative(target), type };
 }
 
 // ---------------------------------------------------------------------------
@@ -228,8 +228,9 @@ async function callFlash(prompt: string): Promise<FilingPayload> {
  * as "not filed" and never let it cost the artist the transcript itself.
  */
 export async function fileTranscript(transcriptRelativePath: string): Promise<FiledResult> {
-  const absolute = path.resolve(REPO_ROOT, transcriptRelativePath);
-  if (!absolute.startsWith(path.join(REPO_ROOT, "voice", "transcripts"))) {
+  const absolute = path.resolve(DATA_ROOT, transcriptRelativePath);
+  const transcriptRoot = path.join(DATA_ROOT, "voice", "transcripts");
+  if (absolute !== transcriptRoot && !absolute.startsWith(`${transcriptRoot}${path.sep}`)) {
     throw new Error("Only voice transcripts can be filed.");
   }
 
@@ -258,7 +259,7 @@ export async function fileTranscript(transcriptRelativePath: string): Promise<Fi
 
     const target = uniquePath(EPISODIC_DIR, `${dayStamp(now)}-${slugify(payload.episodic.title)}`);
     fs.writeFileSync(target, `${frontmatter}# ${payload.episodic.title}\n\n${payload.episodic.body.trim()}\n`, "utf8");
-    result.episodic = toRepoRelative(target);
+    result.episodic = toDataRelative(target);
   }
 
   if (typeof payload.workingSelfUpdate === "string" && payload.workingSelfUpdate.trim()) {
@@ -284,7 +285,7 @@ export async function fileTranscript(transcriptRelativePath: string): Promise<Fi
 
     const target = uniquePath(SEMANTIC_DIR, slugify(note.slug));
     fs.writeFileSync(target, `${frontmatter}# ${note.title}\n\n${note.body.trim()}\n`, "utf8");
-    result.semantic.push(toRepoRelative(target));
+      result.semantic.push(toDataRelative(target));
   }
 
   return result;

@@ -11,12 +11,25 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const os = require("node:os");
+const { execFileSync } = require("node:child_process");
 const next = require("next");
 const { WebSocket, WebSocketServer } = require("ws");
 
 const PORT = Number(process.env.PORT || 3017);
 const dev = process.env.NODE_ENV !== "production";
-const ENV_PATH = path.join(__dirname, "..", ".env");
+const REPO_ROOT = path.join(__dirname, "..");
+const DATA_ROOT = process.env.STUDIO_ASSISTANT_DATA_DIR?.trim()
+  ? path.resolve(process.env.STUDIO_ASSISTANT_DATA_DIR.trim())
+  : process.platform === "darwin"
+    ? path.join(os.homedir(), "Library", "Application Support", "Futureproof Studio Assistant")
+    : process.platform === "win32"
+      ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Futureproof Studio Assistant")
+      : path.join(
+          process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
+          "futureproof-studio-assistant",
+        );
+const ENV_PATH = path.join(DATA_ROOT, ".env");
 const GEMINI_URL =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 
@@ -59,7 +72,7 @@ function relay(browser) {
   const apiKey = loadApiKey();
 
   if (!apiKey) {
-    browser.send(JSON.stringify({ relayError: "GEMINI_API_KEY is missing from the repo .env file." }));
+    browser.send(JSON.stringify({ relayError: "GEMINI_API_KEY is missing from the personal data .env file." }));
     browser.close(1011, "Missing API key");
     return;
   }
@@ -110,6 +123,10 @@ function relay(browser) {
 }
 
 async function main() {
+  execFileSync(process.execPath, [path.join(REPO_ROOT, "scripts", "init-data.mjs")], {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
   const app = next({ dev, dir: __dirname });
   await app.prepare();
   const handle = app.getRequestHandler();

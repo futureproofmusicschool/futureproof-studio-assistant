@@ -11,22 +11,25 @@ An assistant is only as useful as what it knows about you. A general model knows
 This repo fixes that with two pieces:
 
 1. **One soul document** (`AGENTS.md`): who the assistant is, what it is for, and how it should work with you. Codex reads it directly. `CLAUDE.md` imports the same file for Claude Code, so the two clients cannot drift into different personalities.
-2. **A memory system** (`memory/`): files the assistant reads and writes so knowledge survives between sessions. Sessions end. Files persist.
+2. **A memory system** (`memory/`): files the assistant reads and writes so knowledge survives between sessions. The files live in the external student-data directory; the repo path is a compatibility link for coding clients.
 
 That is the foundation. MCP tools, skills, automation, and the local app sit on top of it.
 
 ## Getting started
 
 1. **Copy this repo** or click **Use this template** on GitHub.
-2. **Run `scripts/init.sh`.** It copies starter files from `examples/` into their real locations and installs a pre-commit guard. Everything personal (your identity, memory, board, contacts, prompts, transcripts, keys) lives in **gitignored files**, so your data never leaves your machine even though the code repo is public.
-3. **Install Node.js 18 or newer**, then start the app (`npm install --prefix app && npm run dev --prefix app`) and paste a Google Gemini API key into the setup screen. That is the only account you need: talking, writing MIDI, and filing sessions into memory all run on it.
-4. **Optional: a coding client for deeper work.** Claude Code (`claude`) or Codex (`codex`) opens the repo as a working session, which is better for auditing memory, editing prompts, and changing the assistant itself. Neither is required for the assistant to remember things.
-5. **Personalize the gitignored files:**
+2. **Install Node.js 18 or newer.**
+3. **Run `scripts/init.sh`.** It creates or reconnects your external student-data directory and installs a pre-commit guard. On macOS the default is `~/Library/Application Support/Futureproof Studio Assistant/`. Existing repo-local data is migrated without overwriting anything.
+4. **Start the app** (`npm install --prefix app && npm run dev --prefix app`) and paste a Google Gemini API key into Settings. That is the only account you need: talking, writing MIDI, and filing sessions into memory all run on it.
+5. **Optional: a coding client for deeper work.** Claude Code (`claude`) or Codex (`codex`) opens the repo as a working session, which is better for auditing memory, editing prompts, and changing the assistant itself. Neither is required for the assistant to remember things.
+6. **Personalize the compatibility paths:**
    - `CLAUDE.local.md`: name the assistant and describe who you are
    - `assistant.json`: the same name, your name, and the accent color (the names are also editable in the app's Settings tab)
    - `voice/prompt.md`: describe the artist so the voice assistant is not generic
    - `.claude/rules/studio-context.md`: add your DAW, gear, genres, and workflow
-6. **Start working.** Talk to it in the app, or open the repo in a coding client and ask for help with a track. Tell the assistant what is worth remembering; every voice session is filed into memory automatically when it ends.
+7. **Start working.** Talk to it in the app, or open the repo in a coding client and ask for help with a track. Tell the assistant what is worth remembering; every voice session is filed into memory automatically when it ends.
+
+The app reads and writes the external directory directly. Ignored links in the checkout preserve the familiar paths above for Claude Code, Codex, and shell helpers. A normal pull, a fresh clone, or replacing the entire checkout cannot replace the underlying student data. Set `STUDIO_ASSISTANT_DATA_DIR` before startup to use a different location.
 
 A good first prompt:
 
@@ -52,6 +55,7 @@ Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`
 |---|---|
 | `AGENTS.md` | Canonical soul document shared by Claude Code and Codex. Edit this file. |
 | `CLAUDE.md` | Thin Claude Code entry point that imports `AGENTS.md`. |
+| `~/Library/Application Support/Futureproof Studio Assistant/` | Default macOS location for all student-owned data. Settings shows the exact location in use. |
 | `assistant.json` | App name, accent color, and enabled tabs. |
 | `.claude/rules/studio-context.md` | Facts about your studio: DAW, gear, plugins, genres, and aliases. |
 | `.claude/rules/memory.md` | Memory schema and conventions shared by both clients. |
@@ -65,7 +69,7 @@ Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`
 | `app/` | Next.js interface with Talk, Board, Contacts, and Settings tabs (port 3017). Also relays the voice socket. |
 | `ableton/AbletonOSC/` | Vendored Ableton Live Remote Script (OSC control surface); install with `scripts/install-abletonosc.sh`. |
 | `desktop/` | Electron shell that wraps the app in its own window. |
-| `examples/` | Starter copies of every gitignored personal file; `scripts/init.sh` puts them in place. |
+| `examples/` | Starter copies used to initialize a new external student-data directory. |
 | `voice/` | Base voice prompt and saved session transcripts. |
 | `interviews/templates/` | Session modes for the Talk tab: onboarding, session debrief, brainstorm. |
 | `outbox/` | Email drafts written during a voice session. Nothing here is ever sent. |
@@ -87,7 +91,7 @@ npm run dev
 
 Open [http://localhost:3017](http://localhost:3017). The app has four tabs:
 
-- **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Add or replace your Gemini API key from Settings; first run also prompts for it on the Talk screen. The key is saved to the gitignored repo-root `.env` and stays on the server, which relays the socket at `/api/talk/ws`. Sessions hang up on their own after five quiet minutes.
+- **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Add or replace your Gemini API key from Settings; first run also prompts for it on the Talk screen. The key is saved in the external student-data directory and stays on the server, which relays the socket at `/api/talk/ws`. Sessions hang up on their own after five quiet minutes.
 - **Board**: a kanban board backed by `board/board.json`. The UI and assistant edit the same source of truth.
 - **Contacts**: an outreach tracker backed by `contacts/contacts.json`, with a correspondence log per contact.
 - **Settings**: name the assistant (and yourself), pick which Mac runs Ableton Live, choose which model writes MIDI, and see what is on the reference shelf. Always present, even if you trim the other tabs in `assistant.json`.
@@ -104,7 +108,7 @@ Setup: use **Install on this Mac** under Settings → Ableton Live, select **Abl
 
 Ask out loud for material ("give me a sparse ride-led groove under that, eight bars") and the assistant hands the brief to a **composer model** that writes the performance, then puts it in the clip. It takes 20 to 60 seconds. By default the composer is Gemini Pro on the key you already gave it; the Settings tab's Composer panel can switch it to Claude Fable 5, either on an Anthropic API key or through a local `claude` CLI login.
 
-Drop your sample library's articulation documentation into `instruments/` as markdown, name it when you ask ("on the taiko kit"), and the whole doc goes into the composer's prompt, so keyswitches get placed the way the manual says. See [`instruments/README.md`](instruments/README.md). Continuous CC lanes cannot be written yet.
+Drop your sample library's articulation documentation into the student-data directory's `instruments/` folder as markdown, name it when you ask ("on the taiko kit"), and the whole doc goes into the composer's prompt, so keyswitches get placed the way the manual says. Settings shows the data directory. See [`instruments/README.md`](instruments/README.md). Continuous CC lanes cannot be written yet.
 
 ## Desktop app
 

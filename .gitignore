@@ -9,14 +9,14 @@ node_modules/
 __pycache__/
 *.py[cod]
 
-# ---- Personal studio data: never committed. Start from examples/ (scripts/init.sh). ----
+# ---- Ignored compatibility links to external student data (scripts/init.sh). ----
 /assistant.json
 /settings.json
 /ableton-hosts.json
 /board/board.json
 /contacts/contacts.json
-/memory/
-/plans/
+/memory
+/plans
 /outbox/*
 !/outbox/README.md
 # Instrument docs are usually third-party manual text, and which instruments you
@@ -28,10 +28,10 @@ __pycache__/
 /reference/*
 !/reference/README.md
 /voice/prompt.md
-/voice/transcripts/
+/voice/transcripts
 /.claude/rules/studio-context.md
 /.claude/rules/*.local.md
-/.claude/skills/
+/.claude/skills
 CLAUDE.local.md
 !/examples/CLAUDE.local.md
 /.git-personal-terms

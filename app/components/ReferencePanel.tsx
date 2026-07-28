@@ -8,13 +8,17 @@ import { useEffect, useState } from "react";
  */
 export function ReferencePanel() {
   const [docs, setDocs] = useState<string[] | null>(null);
+  const [dataDirectory, setDataDirectory] = useState("");
 
   useEffect(() => {
     let active = true;
     void fetch("/api/settings", { cache: "no-store" })
       .then((response) => response.json())
-      .then((body: { referenceDocs?: string[] }) => {
-        if (active) setDocs(Array.isArray(body.referenceDocs) ? body.referenceDocs : []);
+      .then((body: { referenceDocs?: string[]; dataDirectory?: string }) => {
+        if (active) {
+          setDocs(Array.isArray(body.referenceDocs) ? body.referenceDocs : []);
+          setDataDirectory(typeof body.dataDirectory === "string" ? body.dataDirectory : "");
+        }
       })
       .catch(() => {
         if (active) setDocs(null);
@@ -36,8 +40,8 @@ export function ReferencePanel() {
       </span>
       <p className="reference-panel-hint">
         {docs.length === 0
-          ? "Drop manuals (PDF, docx, text, or markdown) into the repo's reference/ folder and the assistant can search them when you ask technical questions."
-          : `Searchable when you ask: ${docs.join(", ")}. Add more by dropping files into the repo's reference/ folder.`}
+          ? `Drop manuals (PDF, docx, text, or markdown) into ${dataDirectory || "your personal data folder"}/reference and the assistant can search them when you ask technical questions.`
+          : `Searchable when you ask: ${docs.join(", ")}. Add more in ${dataDirectory || "your personal data folder"}/reference.`}
       </p>
     </div>
   );

@@ -104,8 +104,8 @@ export function GeminiKeyPanel() {
       </div>
 
       <p className="api-key-note">
-        Stored only in this machine&apos;s gitignored <code>.env</code> file. The saved value is never sent back to
-        the page.
+        Stored only in this machine&apos;s external personal-data <code>.env</code> file. The saved value is never
+        sent back to the page.
       </p>
     </div>
   );

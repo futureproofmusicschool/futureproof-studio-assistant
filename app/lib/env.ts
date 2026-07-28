@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory } from "@/lib/paths";
 
-const ENV_PATH = repoPath(".env");
+const ENV_PATH = dataPath(".env");
 
-// Ported from voice/server.js so the Talk stack reads the same repo-root .env
-// the voice relay used. The key never leaves the server.
+// Ported from server.js so the Talk stack reads the same external data file
+// the voice relay uses. The key never leaves the server.
 export function parseEnv(source: string) {
   const values: Record<string, string> = {};
 
@@ -41,7 +41,7 @@ function readEnvValue(name: string) {
 }
 
 /**
- * Save one key into the repo-root .env (gitignored), replacing any existing
+ * Save one key into the external data .env, replacing any existing
  * line for it. Called from the app's setup screen so a new user never has to
  * open a dotfile. Keys are written, never echoed back.
  */
@@ -60,6 +60,7 @@ function writeEnvValue(name: string, value: string) {
   const lines = source.split(/\r?\n/).filter((line) => !pattern.test(line));
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   lines.push(`${name}=${clean}`);
+  ensureDataDirectory();
   fs.writeFileSync(ENV_PATH, `${lines.join("\n")}\n`);
 }
 

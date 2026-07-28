@@ -3,6 +3,7 @@ import { ComposerPanel } from "@/components/ComposerPanel";
 import { GeminiKeyPanel } from "@/components/GeminiKeyPanel";
 import { IdentityPanel } from "@/components/IdentityPanel";
 import { ReferencePanel } from "@/components/ReferencePanel";
+import { DATA_ROOT } from "@/lib/paths";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,18 @@ export default function SettingsPage() {
 
       <div className="settings-body">
         <IdentityPanel />
+
+        <div className="settings-block">
+          <h2>Personal data</h2>
+          <p className="settings-block-hint">
+            Your identity, memory, projects, keys, contacts, transcripts, manuals, and instrument documents live
+            outside the app checkout so updates cannot replace them.
+          </p>
+          <div className="data-location">
+            <span>Stored on this machine</span>
+            <code>{DATA_ROOT}</code>
+          </div>
+        </div>
 
         <div className="settings-block">
           <h2>Gemini API key</h2>

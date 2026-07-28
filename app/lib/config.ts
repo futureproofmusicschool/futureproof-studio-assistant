@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { repoPath } from "@/lib/paths";
+import { dataPath, ensureDataDirectory, repoPath } from "@/lib/paths";
 
 export type AssistantConfig = {
   name: string;
@@ -10,7 +10,13 @@ export type AssistantConfig = {
 };
 
 export function readAssistantConfig(): AssistantConfig {
-  const contents = fs.readFileSync(repoPath("assistant.json"), "utf8");
+  let contents: string;
+  try {
+    contents = fs.readFileSync(dataPath("assistant.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    contents = fs.readFileSync(repoPath("examples", "assistant.json"), "utf8");
+  }
   const config = JSON.parse(contents) as AssistantConfig;
 
   if (
@@ -40,6 +46,7 @@ export function writeAssistantConfig(update: { name?: string; userName?: string 
   if (!next.name) throw new Error("The assistant needs a name.");
   if (!next.userName) throw new Error("Your name cannot be empty.");
 
-  fs.writeFileSync(repoPath("assistant.json"), `${JSON.stringify(next, null, 2)}\n`);
+  ensureDataDirectory();
+  fs.writeFileSync(dataPath("assistant.json"), `${JSON.stringify(next, null, 2)}\n`);
   return next;
 }
