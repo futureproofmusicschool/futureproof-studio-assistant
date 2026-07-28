@@ -98,7 +98,7 @@ During a Talk session the voice assistant can search the web, search and read yo
 
 The voice assistant sees and controls Ableton Live: session and arrangement contents, transport and tempo, mixer moves, and above all creating MIDI clips, writing notes into them, and placing them on the arrangement timeline. It edits only when asked and confirms before anything destructive.
 
-Setup: run `scripts/install-abletonosc.sh` (add `user@host` to install on another Mac on your network), select **AbletonOSC** as a Control Surface in Live's preferences (Link, Tempo & MIDI), and pick the machine in the Settings tab. The transport is OSC over UDP to the vendored Remote Script in `ableton/AbletonOSC/`; it is unauthenticated, so keep it on your local network and never port-forward 11000/11001.
+Setup: use **Install on this Mac** under Settings → Ableton Live, select **AbletonOSC** as a Control Surface in Live's preferences (Link, Tempo & MIDI), and pick the machine in Settings. For another Mac on your network, run `scripts/install-abletonosc.sh user@host` instead. The transport is OSC over UDP to the vendored Remote Script in `ableton/AbletonOSC/`; it is unauthenticated, so keep it on your local network and never port-forward 11000/11001.
 
 ### Asking for a part
 

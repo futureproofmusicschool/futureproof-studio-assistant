@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 type Health = { host: string; reachable: boolean; version?: string };
+type InstallState = { supported: boolean; installed: boolean; message?: string; error?: string };
 
 type DiscoveredHost = {
   host: string;
@@ -55,6 +56,11 @@ export function AbletonChip() {
 /** Machine picker shown on the Talk setup screen. */
 export function AbletonPanel() {
   const [health, setHealth] = useState<Health | null>(null);
+  const [installState, setInstallState] = useState<InstallState | null>(null);
+  const [confirmInstall, setConfirmInstall] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installMessage, setInstallMessage] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [hosts, setHosts] = useState<DiscoveredHost[] | null>(null);
@@ -67,6 +73,14 @@ export function AbletonPanel() {
     void fetchHealth().then((next) => {
       if (mountedRef.current) setHealth(next);
     });
+    void fetch("/api/ableton/install", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((body: InstallState) => {
+        if (mountedRef.current) setInstallState(body);
+      })
+      .catch(() => {
+        if (mountedRef.current) setInstallState(null);
+      });
     return () => {
       mountedRef.current = false;
     };
@@ -113,6 +127,33 @@ export function AbletonPanel() {
     setOpen(true);
     if (!hosts && !scanning) void scan();
   };
+
+  const install = useCallback(async () => {
+    setInstalling(true);
+    setInstallError(null);
+    setInstallMessage(null);
+    try {
+      const response = await fetch("/api/ableton/install", {
+        method: "POST",
+        headers: { "x-studio-assistant-action": "install-abletonosc" },
+      });
+      const body = (await response.json()) as InstallState;
+      if (!response.ok) throw new Error(body.error || "AbletonOSC installation failed.");
+      if (mountedRef.current) {
+        setInstallState(body);
+        setConfirmInstall(false);
+        setInstallMessage(
+          "Installed. Restart Ableton Live, then select AbletonOSC under Preferences → Link, Tempo & MIDI.",
+        );
+      }
+    } catch (caught) {
+      if (mountedRef.current) {
+        setInstallError(caught instanceof Error ? caught.message : "AbletonOSC installation failed.");
+      }
+    } finally {
+      if (mountedRef.current) setInstalling(false);
+    }
+  }, []);
 
   const currentLabel = health
     ? health.host === "127.0.0.1"
@@ -176,9 +217,57 @@ export function AbletonPanel() {
             </button>
           </div>
           <p className="ableton-panel-hint">
-            The machine must be running Live with the AbletonOSC control surface enabled (install it with
-            scripts/install-abletonosc.sh).
+            The selected machine must be running Live with the AbletonOSC control surface enabled.
           </p>
+        </div>
+      ) : null}
+
+      {installState?.supported ? (
+        <div className="ableton-installer">
+          <div className="ableton-installer-summary">
+            <div>
+              <strong>{installState.installed ? "AbletonOSC is installed on this Mac" : "Install AbletonOSC"}</strong>
+              <p>
+                {health?.host && health.host !== "127.0.0.1"
+                  ? "This action affects the Mac running Studio Assistant, not the remote Ableton machine selected above."
+                  : "Copies the bundled control surface into this Mac’s Ableton User Library."}
+              </p>
+            </div>
+            {!confirmInstall ? (
+              <button disabled={installing} onClick={() => setConfirmInstall(true)} type="button">
+                {installState.installed ? "Reinstall" : "Install on this Mac"}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="ableton-installer-confirm" data-open={confirmInstall ? "true" : "false"}>
+            <div>
+              <p>
+                {installState.installed
+                  ? "This replaces the existing AbletonOSC folder with the bundled version."
+                  : "This writes AbletonOSC to Ableton’s Remote Scripts folder."}
+              </p>
+              <div>
+                <button className="ableton-install-confirm" disabled={installing} onClick={() => void install()} type="button">
+                  {installing ? "Installing…" : "Confirm install"}
+                </button>
+                <button disabled={installing} onClick={() => setConfirmInstall(false)} type="button">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {installMessage ? (
+            <p className="ableton-installer-result" role="status">
+              {installMessage}
+            </p>
+          ) : null}
+          {installError ? (
+            <p className="ableton-panel-error" role="alert">
+              {installError}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>
