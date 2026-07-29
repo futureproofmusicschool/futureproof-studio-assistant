@@ -68,6 +68,33 @@ function loadApiKey() {
   }
 }
 
+function safeGeminiDetail(value) {
+  const raw = String(value || "")
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[redacted API key]")
+    .replace(/([?&]key=)[^&\s]+/gi, "$1[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = JSON.parse(raw);
+    const detail = parsed?.error?.message || parsed?.message || parsed?.error?.status;
+    if (typeof detail === "string" && detail.trim()) return safeGeminiDetail(detail);
+  } catch {
+    // WebSocket close reasons are often plain text rather than JSON.
+  }
+
+  return raw.slice(0, 500);
+}
+
+function reportGeminiFailure(browser, message) {
+  const safeMessage = safeGeminiDetail(message) || "Gemini Live closed the connection without an explanation.";
+  console.error(`Gemini Live session rejected: ${safeMessage}`);
+  if (browser.readyState === WebSocket.OPEN) {
+    browser.send(JSON.stringify({ relayError: safeMessage }));
+  }
+}
+
 function relay(browser) {
   const apiKey = loadApiKey();
 
@@ -109,15 +136,21 @@ function relay(browser) {
   });
 
   upstream.on("error", (error) => {
-    console.error("Gemini Live socket error:", error.message);
-    if (browser.readyState === WebSocket.OPEN) {
-      browser.send(JSON.stringify({ relayError: "The Gemini Live connection failed." }));
-    }
+    reportGeminiFailure(browser, `Gemini Live connection failed: ${error.message}`);
   });
 
   upstream.on("close", (code, reason) => {
+    const detail = safeGeminiDetail(reason.toString());
+    if (code !== 1000) {
+      reportGeminiFailure(
+        browser,
+        detail
+          ? `Gemini rejected the session (code ${code}): ${detail}`
+          : `Gemini rejected the session with WebSocket code ${code} and no explanation.`,
+      );
+    }
     if (browser.readyState === WebSocket.OPEN) {
-      browser.close(code === 1000 ? 1000 : 1011, reason.toString() || "Gemini connection closed");
+      browser.close(code === 1000 ? 1000 : 1011, code === 1000 ? "Gemini session ended" : "Gemini session rejected");
     }
   });
 }

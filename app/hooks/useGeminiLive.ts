@@ -165,6 +165,7 @@ export function useGeminiLive({
   const nextTurnId = useRef(0);
   const savingRef = useRef(false);
   const closingRef = useRef(false);
+  const relayErrorRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const onAutoEndRef = useRef(onAutoEnd);
   onAutoEndRef.current = onAutoEnd;
@@ -369,6 +370,7 @@ export function useGeminiLive({
       }
 
       if (typeof message.relayError === "string") {
+        relayErrorRef.current = message.relayError;
         setError(message.relayError);
         setStatus("error");
         return;
@@ -428,6 +430,7 @@ export function useGeminiLive({
       draftsRef.current = [];
       savingRef.current = false;
       closingRef.current = false;
+      relayErrorRef.current = null;
 
       let setup: unknown;
       try {
@@ -475,12 +478,17 @@ export function useGeminiLive({
           setStatus("error");
         }
       });
-      socket.addEventListener("close", () => {
+      socket.addEventListener("close", (event) => {
         socketRef.current = null;
         teardownAudio();
         setStatus((current) => {
-          if (current === "error" || closingRef.current) return current;
-          setError("The session closed unexpectedly. The transcript was saved.");
+          if (current === "error" || closingRef.current || relayErrorRef.current) return current;
+          const detail = event.reason?.trim();
+          setError(
+            detail && detail !== "Gemini session rejected"
+              ? `The session closed unexpectedly (code ${event.code}): ${detail}`
+              : `The session closed unexpectedly (code ${event.code}). The transcript was saved.`,
+          );
           return "error";
         });
         if (!closingRef.current) void saveTranscript();
