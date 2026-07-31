@@ -27,6 +27,10 @@ __pycache__/
 # The reference shelf: manuals are third-party text and what you own is personal.
 /reference/*
 !/reference/README.md
+# Style docs are the studio's own research and are not published. Only the
+# README, which explains what the folder is for, is tracked.
+/styles/*
+!/styles/README.md
 /voice/prompt.md
 /voice/transcripts
 /.claude/rules/studio-context.md

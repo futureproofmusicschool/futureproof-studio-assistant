@@ -57,9 +57,13 @@ uncertain as uncertain, and never invent stroke names or pattern names — a
 plausible-sounding fake name is worse than an honest gap, because the composer
 will use it with total confidence.
 
-## Tracked in git
+## Not tracked in git
 
-Unlike `instruments/` and `reference/`, this folder **is** committed. These are
-original research documents about public musical traditions, not third-party
-manual text and not personal studio data. Keep it that way: no library names you
-own, no file paths, no personal facts.
+Like `instruments/` and `reference/`, the docs themselves live in the external
+student-data directory, and only this README is committed. The ignored `styles/`
+paths in the checkout are compatibility links to that directory.
+
+These are the studio's own research: hours of work, and not something this
+public repo publishes on the studio's behalf. **Never commit a style doc.** If
+you write one, it goes to the data root and the link comes back on its own from
+`scripts/init-data.mjs`.

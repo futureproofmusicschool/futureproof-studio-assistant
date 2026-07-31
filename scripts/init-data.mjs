@@ -202,5 +202,6 @@ migrateLocalRules();
 migrateMixedDirectory("outbox", new Set(["README.md"]));
 migrateMixedDirectory("instruments", new Set(["README.md", "example-percussion.md"]));
 migrateMixedDirectory("reference", new Set(["README.md"]));
+migrateMixedDirectory("styles", new Set(["README.md"]));
 
 console.log(`student data: ${DATA_ROOT}`);
