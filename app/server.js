@@ -15,6 +15,9 @@ const os = require("node:os");
 const { execFileSync } = require("node:child_process");
 const next = require("next");
 const { WebSocket, WebSocketServer } = require("ws");
+// Next bundles its own copy of this module for the route handlers, so it holds
+// no in-memory state: every write goes straight to disk.
+const conversation = require("./lib/conversation-store.js");
 
 const PORT = Number(process.env.PORT || 3017);
 const dev = process.env.NODE_ENV !== "production";
@@ -95,6 +98,95 @@ function reportGeminiFailure(browser, message) {
   }
 }
 
+/**
+ * A voice call's turns, persisted here rather than in the browser.
+ *
+ * The relay sees every frame anyway, and it survives the tab closing
+ * mid-sentence, so this is the one place that can promise the conversation is
+ * on disk. Fragments arrive piecemeal and overlap, hence mergeTranscriptText.
+ */
+function createVoiceRecorder() {
+  let pendingUserTyped = "";
+  let pendingUserVoice = "";
+  let pendingAssistantTranscript = "";
+  let pendingAssistantModel = "";
+
+  const flush = () => {
+    const turns = [];
+
+    if (pendingUserTyped.trim()) turns.push({ role: "user", mode: "text", text: pendingUserTyped });
+    if (pendingUserVoice.trim()) turns.push({ role: "user", mode: "voice", text: pendingUserVoice });
+
+    // Prefer the spoken transcription; the modelTurn text parts are a fallback
+    // for the rare turn that carries text without transcription.
+    const assistant = pendingAssistantTranscript.trim() || pendingAssistantModel.trim();
+    if (assistant) turns.push({ role: "assistant", mode: "voice", text: assistant });
+
+    pendingUserTyped = "";
+    pendingUserVoice = "";
+    pendingAssistantTranscript = "";
+    pendingAssistantModel = "";
+
+    if (turns.length > 0) {
+      try {
+        conversation.appendTurns(turns);
+      } catch (error) {
+        console.error("Could not persist voice turns:", error.message);
+      }
+    }
+  };
+
+  return {
+    /** Frames the browser sends up. */
+    fromBrowser(frame) {
+      const typed = frame?.realtimeInput?.text;
+      if (typeof typed === "string" && typed.trim()) {
+        pendingUserTyped = conversation.mergeTranscriptText(pendingUserTyped, typed);
+      }
+      // clientContent is only ever seeding (prior thread turns replayed into a
+      // fresh Live session). Persisting it would double the thread on every call.
+      if (frame?.clientContent) {
+        console.log(`Live seeding: ${frame.clientContent.turns?.length ?? 0} prior turns (not persisted)`);
+      }
+    },
+
+    /** Frames Gemini sends down. */
+    fromUpstream(frame) {
+      const content = frame?.serverContent;
+      if (!content) return;
+
+      const heard = content.inputTranscription?.text;
+      if (typeof heard === "string" && heard) {
+        pendingUserVoice = conversation.mergeTranscriptText(pendingUserVoice, heard);
+      }
+
+      const spoken = content.outputTranscription?.text;
+      if (typeof spoken === "string" && spoken) {
+        pendingAssistantTranscript = conversation.mergeTranscriptText(pendingAssistantTranscript, spoken);
+      }
+
+      for (const part of content.modelTurn?.parts ?? []) {
+        if (typeof part.text === "string" && part.text) {
+          pendingAssistantModel = conversation.mergeTranscriptText(pendingAssistantModel, part.text);
+        }
+      }
+
+      if (content.turnComplete) flush();
+    },
+
+    /** Whatever was mid-sentence when the socket died still belongs on disk. */
+    flush,
+  };
+}
+
+function parseFrame(data) {
+  try {
+    return JSON.parse(data.toString());
+  } catch {
+    return null;
+  }
+}
+
 function relay(browser) {
   const apiKey = loadApiKey();
 
@@ -106,8 +198,13 @@ function relay(browser) {
 
   const upstream = new WebSocket(`${GEMINI_URL}?key=${encodeURIComponent(apiKey)}`);
   const pending = [];
+  const recorder = createVoiceRecorder();
 
   browser.on("message", (data, isBinary) => {
+    const frame = parseFrame(data);
+    // Audio chunks are the overwhelming majority of frames; skip parsing them.
+    if (frame && !frame.realtimeInput?.audio) recorder.fromBrowser(frame);
+
     if (upstream.readyState === WebSocket.OPEN) {
       upstream.send(data, { binary: isBinary });
     } else if (upstream.readyState === WebSocket.CONNECTING) {
@@ -118,6 +215,7 @@ function relay(browser) {
   });
 
   browser.on("close", () => {
+    recorder.flush();
     if (upstream.readyState < WebSocket.CLOSING) upstream.close(1000, "Browser disconnected");
   });
 
@@ -132,6 +230,8 @@ function relay(browser) {
   // Gemini Live flags its JSON frames as binary; forward them untouched and let
   // the browser parse.
   upstream.on("message", (data, isBinary) => {
+    const frame = parseFrame(data);
+    if (frame) recorder.fromUpstream(frame);
     if (browser.readyState === WebSocket.OPEN) browser.send(data, { binary: isBinary });
   });
 
@@ -140,19 +240,46 @@ function relay(browser) {
   });
 
   upstream.on("close", (code, reason) => {
+    recorder.flush();
     const detail = safeGeminiDetail(reason.toString());
-    if (code !== 1000) {
-      reportGeminiFailure(
-        browser,
-        detail
-          ? `Gemini rejected the session (code ${code}): ${detail}`
-          : `Gemini rejected the session with WebSocket code ${code} and no explanation.`,
-      );
+
+    // The client classifies closes to decide whether to reconnect (an expired
+    // resumption handle is recoverable, a bad argument is not), so the real
+    // code and reason have to survive the hop. Close reasons are capped at 123
+    // bytes on the wire and the words that matter ("session expired", "invalid
+    // argument", "too large") come first, so truncate from the end.
+    if (code !== 1000 && !detail) {
+      reportGeminiFailure(browser, `Gemini rejected the session with WebSocket code ${code} and no explanation.`);
+    } else if (code !== 1000) {
+      console.error(`Gemini Live closed (code ${code}): ${detail}`);
     }
+
     if (browser.readyState === WebSocket.OPEN) {
-      browser.close(code === 1000 ? 1000 : 1011, code === 1000 ? "Gemini session ended" : "Gemini session rejected");
+      const safeCode = code >= 1000 && code <= 4999 && code !== 1005 && code !== 1006 ? code : 1011;
+      browser.close(safeCode, (detail || "Gemini session ended").slice(0, 110));
     }
   });
+}
+
+/**
+ * The conversation has no session end any more, so nothing else would ever ask
+ * the bookkeeper to read it. Check on boot and hourly; the route is idempotent
+ * and only files days that are already over, so a quiet check costs nothing.
+ */
+function scheduleFiling() {
+  const runFiling = async () => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${PORT}/api/conversation/file?auto=1`, { method: "POST" });
+      const body = await response.json();
+      if (body.filed?.length) console.log(`Filed into memory: ${body.filed.join(", ")}`);
+    } catch (error) {
+      console.error("Could not run the daily filing:", error.message);
+    }
+  };
+
+  // A little after boot, so the first request is not competing with startup.
+  setTimeout(runFiling, 30_000).unref?.();
+  setInterval(runFiling, 60 * 60 * 1000).unref?.();
 }
 
 async function main() {
@@ -192,6 +319,7 @@ async function main() {
 
   server.listen(PORT, () => {
     console.log(`The app is listening at http://localhost:${PORT}`);
+    scheduleFiling();
   });
 }
 

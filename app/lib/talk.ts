@@ -26,6 +26,8 @@ export type TalkMode = { id: string; name: string; description: string };
 
 export type TalkTurn = { speaker: string; text: string };
 
+export type Modality = "voice" | "text";
+
 const RETRIEVAL_POLICY = `HOW TO USE WHAT YOU HAVE
 You already hold the working-self snapshot, the board, and the contacts digest above; answer from them directly. For anything deeper (past sessions, taste notes, procedures, old transcripts, a contact's full history) call search_studio_files first, then read_studio_file on the best hit. For facts about the outside world (dates, releases, people, venues) use search. Never guess at file contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
 
@@ -37,6 +39,17 @@ You can also draft an email with draft_email. It writes a file to outbox/ and ne
 
 ABLETON LIVE
 You can see and control the artist's Ableton Live session with the get_live_* and live_* tools. Session state always comes from those tools, never from memory files or guesses: when the conversation turns to what's in Ableton, call get_live_overview first. You are a collaborator: when the artist asks for musical material ("give me a bass line there", "put a groove under that"), call compose_midi_part with their own words as the brief. That is the tool for material. Do not hand-write note lists with edit_live_clip_notes for a whole part; edit_live_clip_notes is for small surgical changes ("make that note longer", "drop the velocity on the offbeats"). compose_midi_part takes 20-60 seconds, so say you are writing it before you call, then read its explanation out loud when it lands. Edit only when asked or clearly implied, never on your own initiative. Before anything destructive (deleting a clip, replacing or clearing notes, compose_midi_part with replace), confirm out loud and wait for a yes. After any edit, say exactly what changed; if it was wrong, live_transport undo reverses it. If Live isn't reachable, say so plainly and move on.`;
+
+/**
+ * Appended after RETRIEVAL_POLICY for text sessions. The base prompt and the
+ * policy are written for a spoken conversation; this block overrides only the
+ * speech-specific rules so the identity stays identical across both tabs.
+ */
+const TEXT_MODE_ADDENDUM = `THIS IS A TEXT CHAT, NOT A VOICE CALL
+Everything above that says "say", "speak", "out loud", or forbids lists and markdown was written for the voice session. In this chat you are writing, not speaking: markdown, lists, headings, and code blocks are fine and often clearer. Longer, structured answers are fine when the task calls for them; stay direct and skip filler either way. You are still the same assistant with the same memory and the same taste. This tab is where the artist brings precise, complex instructions: carry them out completely, report what you actually did, and quote file paths exactly. Confirmations that the voice agent gives "out loud" you give in writing before acting; the rule itself still holds, especially before anything destructive in Ableton.
+
+DEEP RESEARCH
+You can launch a Deep Research agent with start_deep_research for genuinely deep questions: a market or collaborator landscape, a thorough technical comparison, anything that deserves dozens of web searches and a cited report. It costs real money (a dollar or three per run) and takes up to twenty minutes, so use it only when the artist explicitly asks for deep or thorough research, and restate the research question back to them in your reply when you start it. Quick facts stay with ordinary search. Check on a running job with check_deep_research when asked, or when a reply mentions the research. Finished reports are saved to the research/ folder and the check tool returns the report text.`;
 
 function readTemplateSource(id: string) {
   if (!TEMPLATE_ID.test(id)) throw new Error("Unknown session mode.");
@@ -150,7 +163,11 @@ async function abletonDigest() {
   ].join(" ");
 }
 
-export async function buildSystemInstruction(modeId: string, assistantName: string) {
+export async function buildSystemInstruction(
+  modeId: string,
+  assistantName: string,
+  modality: Modality = "voice",
+) {
   const base = readOrEmpty(VOICE_PROMPT_PATH);
   const workingSelf = readOrEmpty(WORKING_SELF_PATH);
   const purpose = modePurpose(modeId, assistantName);
@@ -168,12 +185,29 @@ export async function buildSystemInstruction(modeId: string, assistantName: stri
     }`,
     purpose ? `## This session's purpose\n\n${purpose}` : "",
     RETRIEVAL_POLICY,
+    modality === "text" ? TEXT_MODE_ADDENDUM : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
-export async function buildSetupMessage(modeId: string, assistantName: string) {
+/**
+ * The Live handshake.
+ *
+ * `sessionResumption` and `contextWindowCompression` are what make a call
+ * survive Gemini's ~10 minute connection limit: the empty object opts in to
+ * receiving resumption handles (the client swaps in `{ handle }` when it is
+ * resuming), and the sliding window keeps a long call from dying on context
+ * instead. Without both, every call ends at ten minutes with a 1008.
+ *
+ * `minimal` drops the studio digests and keeps identity plus tools. It is the
+ * retry used when Gemini rejects a setup for being too large.
+ */
+export async function buildSetupMessage(modeId: string, assistantName: string, minimal = false) {
+  const systemInstruction = minimal
+    ? readOrEmpty(VOICE_PROMPT_PATH)
+    : await buildSystemInstruction(modeId, assistantName);
+
   return {
     model: LIVE_MODEL,
     generationConfig: {
@@ -182,9 +216,11 @@ export async function buildSetupMessage(modeId: string, assistantName: string) {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } },
       },
     },
-    systemInstruction: { parts: [{ text: await buildSystemInstruction(modeId, assistantName) }] },
+    systemInstruction: { parts: [{ text: systemInstruction }] },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
+    sessionResumption: {},
+    contextWindowCompression: { slidingWindow: {} },
     tools: [{ googleSearch: {} }, { functionDeclarations: FUNCTION_DECLARATIONS }],
   };
 }
@@ -196,10 +232,14 @@ export function timestampForFilename(date: Date) {
   return `${day}-${time}`;
 }
 
+export type TranscriptKind = "voice" | "chat" | "conversation";
+
 /**
  * Same file shape voice/server.js wrote, because the memory workflows read it.
+ * Chat sessions use the same shape in their own directory so the bookkeeper
+ * and the retrieval tools treat both kinds of session alike.
  */
-export function writeTranscript(turns: TalkTurn[], date = new Date()) {
+export function writeTranscript(turns: TalkTurn[], date = new Date(), kind: TranscriptKind = "voice") {
   const body = turns
     .filter((turn) => typeof turn.text === "string" && turn.text.trim())
     .map((turn) => `**${turn.speaker}:** ${turn.text.trim()}`)
@@ -207,9 +247,19 @@ export function writeTranscript(turns: TalkTurn[], date = new Date()) {
 
   if (!body) return null;
 
-  fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: true });
-  const filename = `${timestampForFilename(date)}.md`;
-  const markdown = `# Voice session\n\nDate: ${date.toISOString()}\n\n${body}\n`;
-  fs.writeFileSync(path.join(TRANSCRIPTS_DIR, filename), markdown, "utf8");
-  return `voice/transcripts/${filename}`;
+  const directory = kind === "voice" ? TRANSCRIPTS_DIR : dataPath(kind, "transcripts");
+  const heading =
+    kind === "voice" ? "Voice session" : kind === "chat" ? "Chat session" : "Conversation";
+  fs.mkdirSync(directory, { recursive: true });
+  // A day's conversation is one file, named for the day it covers, so re-filing
+  // the same day overwrites rather than piling up near-duplicates.
+  const filename = kind === "conversation" ? `${dayStamp(date)}.md` : `${timestampForFilename(date)}.md`;
+  const markdown = `# ${heading}\n\nDate: ${date.toISOString()}\n\n${body}\n`;
+  fs.writeFileSync(path.join(directory, filename), markdown, "utf8");
+  return `${kind}/transcripts/${filename}`;
+}
+
+export function dayStamp(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }

@@ -18,7 +18,9 @@ export type ToolActivity = {
   status: "running" | "done" | "error";
 };
 
-export type TalkStatus = "idle" | "connecting" | "live" | "ended" | "error";
+export type TalkStatus = "idle" | "connecting" | "live" | "reconnecting" | "ended" | "error";
+
+type SeedTurn = { role: "user" | "model"; parts: { text: string }[] };
 
 export type EndedSession = {
   savedPath: string | null;
@@ -40,6 +42,25 @@ const PLAYBACK_RATE = 24000;
 // hold a session open forever.
 const IDLE_LIMIT_MS = 5 * 60_000;
 const IDLE_WARNING_MS = 60_000;
+
+// Surviving Gemini's ~10 minute connection limit.
+//
+// Gemini sends a `goAway` with a countdown shortly before it kills the socket.
+// The client closes itself just before that deadline with "expecting a
+// reconnect" set, then reopens with the resumption handle it has been
+// collecting all along. The audio graph is left running across the gap, so a
+// resume is a blip rather than a restart.
+const GO_AWAY_BUFFER_MS = 1500;
+const EXPECTED_RECONNECT_DELAY_MS = 3000;
+const EXPIRED_HANDLE_RETRY_MS = 250;
+const RECONNECT_BASE_DELAY_MS = 2000;
+const RECONNECT_MAX_DELAY_MS = 15000;
+const MAX_RECONNECT_ATTEMPTS = 5;
+
+function closeReasonIncludes(reason: string, ...needles: string[]) {
+  const text = reason.toLowerCase();
+  return needles.some((needle) => text.includes(needle));
+}
 
 // Ported verbatim from voice/public/app.js: known-good against this model.
 const workletSource = `
@@ -163,12 +184,43 @@ export function useGeminiLive({
   const draftsRef = useRef<string[]>([]);
   const mutedRef = useRef(false);
   const nextTurnId = useRef(0);
-  const savingRef = useRef(false);
   const closingRef = useRef(false);
   const relayErrorRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
   const onAutoEndRef = useRef(onAutoEnd);
   onAutoEndRef.current = onAutoEnd;
+
+  // Reconnect machinery. The handle is what lets a reopened socket rejoin the
+  // same Gemini-side conversation instead of starting cold.
+  const setupRef = useRef<Record<string, unknown> | null>(null);
+  const seedTurnsRef = useRef<SeedTurn[]>([]);
+  const modeIdRef = useRef("open");
+  const sessionHandleRef = useRef<string | null>(null);
+  const attemptedHandleRef = useRef<string | null>(null);
+  const invalidatedHandleRef = useRef<string | null>(null);
+  const expectingReconnectRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const tokenOverflowRetryRef = useRef(false);
+  const goAwayTimerRef = useRef<number | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const openSocketRef = useRef<((options: { isReconnect: boolean; minimal?: boolean }) => void) | null>(null);
+
+  const persistHandle = useCallback((handle: string | null) => {
+    void fetch("/api/conversation/handle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: handle ?? "" }),
+    }).catch(() => {
+      // A handle that fails to persist only costs resumption after a reload.
+    });
+  }, []);
+
+  const clearTimers = useCallback(() => {
+    if (goAwayTimerRef.current !== null) window.clearTimeout(goAwayTimerRef.current);
+    if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+    goAwayTimerRef.current = null;
+    reconnectTimerRef.current = null;
+  }, []);
 
   const appendFragment = useCallback((speaker: string, text: string | undefined) => {
     if (typeof text !== "string" || text.length === 0) return;
@@ -214,38 +266,6 @@ export function useGeminiLive({
     captureContextRef.current = null;
     playbackContextRef.current = null;
     setMicLevel(0);
-  }, []);
-
-  const saveTranscript = useCallback(async (): Promise<{
-    path: string | null;
-    filed: boolean;
-    filing: boolean;
-  }> => {
-    const nothingSaved = { path: null, filed: false, filing: false };
-    if (savingRef.current) return nothingSaved;
-    savingRef.current = true;
-
-    const payload = turnsRef.current.map((turn) => ({ speaker: turn.speaker, text: turn.text }));
-    if (payload.length === 0) return nothingSaved;
-
-    try {
-      const response = await fetch("/api/talk/transcripts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ turns: payload }),
-      });
-      const body = (await response.json()) as {
-        path?: string | null;
-        filed?: boolean;
-        filing?: boolean;
-        error?: string;
-      };
-      if (!response.ok) throw new Error(body.error || "Could not save the transcript.");
-      return { path: body.path ?? null, filed: Boolean(body.filed), filing: Boolean(body.filing) };
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not save the transcript.");
-      return nothingSaved;
-    }
   }, []);
 
   const sendToolResponse = useCallback((call: FunctionCall, response: Record<string, unknown>) => {
@@ -378,14 +398,69 @@ export function useGeminiLive({
 
       if (message.setupComplete !== undefined) {
         try {
-          await startMicrophone();
+          // On a resume the mic is already open and feeding the new socket
+          // (the recorder reads socketRef every chunk), so opening it again
+          // would stack a second capture graph.
+          if (!streamRef.current) await startMicrophone();
+
+          reconnectAttemptsRef.current = 0;
+          tokenOverflowRetryRef.current = false;
+          expectingReconnectRef.current = false;
+          attemptedHandleRef.current = null;
+
+          const seeds = seedTurnsRef.current;
+          if (seeds.length > 0) {
+            // With historyConfig.initialHistoryInClientContent set, turnComplete
+            // finalizes the replayed history without making the model answer it.
+            socketRef.current?.send(JSON.stringify({ clientContent: { turns: seeds, turnComplete: true } }));
+            seedTurnsRef.current = [];
+          }
+
           lastActivityRef.current = Date.now();
+          setError(null);
           setStatus("live");
         } catch (caught) {
           setError(caught instanceof Error ? caught.message : "Microphone access failed.");
           setStatus("error");
+          closingRef.current = true;
           socketRef.current?.close(1000, "Microphone unavailable");
         }
+        return;
+      }
+
+      // Gemini hands out a resumption handle periodically. It is the only way
+      // back into this conversation after the connection is cut.
+      const resumption = message.sessionResumptionUpdate as
+        | { newHandle?: string; resumable?: boolean }
+        | undefined;
+      if (resumption) {
+        if (resumption.newHandle) {
+          sessionHandleRef.current = resumption.newHandle;
+          invalidatedHandleRef.current = null;
+          persistHandle(resumption.newHandle);
+        } else if (resumption.resumable === false) {
+          sessionHandleRef.current = null;
+          persistHandle(null);
+        }
+        return;
+      }
+
+      // The warning shot before Gemini closes the socket. Hang up just ahead of
+      // it so the close lands in the reconnect ladder rather than as a failure.
+      const goAway = message.goAway as { timeLeft?: string } | undefined;
+      if (goAway) {
+        const seconds = Number.parseFloat(String(goAway.timeLeft ?? ""));
+        const remaining = Number.isFinite(seconds) ? seconds : 5;
+        const delay = Math.max(remaining * 1000 - GO_AWAY_BUFFER_MS, EXPIRED_HANDLE_RETRY_MS);
+
+        expectingReconnectRef.current = true;
+        if (goAwayTimerRef.current !== null) window.clearTimeout(goAwayTimerRef.current);
+        goAwayTimerRef.current = window.setTimeout(() => {
+          goAwayTimerRef.current = null;
+          if (closingRef.current) return;
+          const socket = socketRef.current;
+          if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "Rotating session");
+        }, delay);
         return;
       }
 
@@ -417,31 +492,202 @@ export function useGeminiLive({
         for (const call of toolCall.functionCalls) void runToolCall(call);
       }
     },
-    [appendFragment, assistantLabel, runToolCall, startMicrophone, userLabel],
+    [appendFragment, assistantLabel, persistHandle, runToolCall, startMicrophone, userLabel],
   );
+
+  const loadConfig = useCallback(async (modeId: string, minimal: boolean) => {
+    const response = await fetch(
+      `/api/talk/config?mode=${encodeURIComponent(modeId)}${minimal ? "&minimal=1" : ""}`,
+      { cache: "no-store" },
+    );
+    const body = (await response.json()) as {
+      setup?: Record<string, unknown>;
+      handle?: string | null;
+      seedTurns?: SeedTurn[];
+      error?: string;
+    };
+    if (!response.ok || !body.setup) throw new Error(body.error || "Could not build the session config.");
+    return body;
+  }, []);
+
+  /**
+   * Open (or reopen) the socket. Everything that survives a reconnect — the
+   * audio graph, the transcript, the collected handle — lives outside this
+   * function, so a resume only swaps the socket underneath.
+   */
+  const openSocket = useCallback(
+    async ({ isReconnect, minimal = false }: { isReconnect: boolean; minimal?: boolean }) => {
+      if (minimal) {
+        try {
+          setupRef.current = (await loadConfig(modeIdRef.current, true)).setup ?? setupRef.current;
+        } catch {
+          // Keep the setup we already have rather than losing the retry.
+        }
+      }
+
+      const setup = setupRef.current;
+      if (!setup) return;
+
+      relayErrorRef.current = null;
+      setStatus(isReconnect ? "reconnecting" : "connecting");
+
+      const stored = sessionHandleRef.current;
+      const resumeHandle = stored && stored !== invalidatedHandleRef.current ? stored : null;
+      attemptedHandleRef.current = resumeHandle;
+
+      // Resuming replays the conversation on Gemini's side already, and a
+      // minimal retry is a rescue from an oversized setup. Seeding either would
+      // duplicate history or re-trigger the failure.
+      if (isReconnect || resumeHandle || minimal) seedTurnsRef.current = [];
+
+      const attemptSetup: Record<string, unknown> = {
+        ...setup,
+        sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
+        ...(seedTurnsRef.current.length > 0
+          ? { historyConfig: { initialHistoryInClientContent: true } }
+          : {}),
+      };
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const socket = new WebSocket(`${protocol}//${window.location.host}/api/talk/ws`);
+      socket.binaryType = "arraybuffer";
+      socketRef.current = socket;
+
+      socket.addEventListener("open", () => socket.send(JSON.stringify({ setup: attemptSetup })));
+      socket.addEventListener("message", (event) => void handleMessage(event));
+      socket.addEventListener("error", () => {
+        // The close handler decides what to do; an error alone is not terminal.
+      });
+
+      socket.addEventListener("close", (event) => {
+        if (socketRef.current === socket) socketRef.current = null;
+        if (goAwayTimerRef.current !== null) {
+          window.clearTimeout(goAwayTimerRef.current);
+          goAwayTimerRef.current = null;
+        }
+
+        const reason = event.reason?.trim() ?? "";
+        const attempted = attemptedHandleRef.current;
+        const wasExpected = expectingReconnectRef.current;
+        expectingReconnectRef.current = false;
+
+        const giveUp = (message: string) => {
+          setError(message);
+          setStatus("error");
+          teardownAudio();
+        };
+        const retry = (delay: number, options: { minimal?: boolean } = {}) => {
+          setStatus("reconnecting");
+          reconnectTimerRef.current = window.setTimeout(() => {
+            reconnectTimerRef.current = null;
+            if (closingRef.current) return;
+            openSocketRef.current?.({ isReconnect: true, minimal: options.minimal });
+          }, delay);
+        };
+
+        // P4: the artist hung up, or the idle timer did it for them.
+        if (closingRef.current) return;
+
+        // A relay-local failure (missing API key) is not something reconnecting fixes.
+        if (relayErrorRef.current) {
+          giveUp(relayErrorRef.current);
+          return;
+        }
+
+        const expiredHandle =
+          event.code === 1008 &&
+          Boolean(attempted) &&
+          closeReasonIncludes(reason, "session expired", "session not found", "not was found", "was not found");
+        const tokenOverflow =
+          event.code === 1007 && closeReasonIncludes(reason, "token", "context", "too large");
+        const protocolError =
+          !tokenOverflow &&
+          (event.code === 1007 ||
+            (event.code === 1008 && closeReasonIncludes(reason, "invalid argument", "unknown name")));
+        const upstreamDown = event.code === 1011 && closeReasonIncludes(reason, "unavailable");
+
+        // P1: the planned rotation at the connection limit, or the same kill
+        // arriving without a goAway warning.
+        if (wasExpected || (upstreamDown && sessionHandleRef.current)) {
+          reconnectAttemptsRef.current = 0;
+          retry(EXPECTED_RECONNECT_DELAY_MS);
+          return;
+        }
+
+        // P2: the handle went stale. Drop it and open a fresh session quietly.
+        if (expiredHandle) {
+          invalidatedHandleRef.current = attempted;
+          sessionHandleRef.current = null;
+          persistHandle(null);
+          retry(EXPIRED_HANDLE_RETRY_MS);
+          return;
+        }
+
+        // P2b: the setup was too big. One retry with identity and tools only.
+        if (tokenOverflow && !tokenOverflowRetryRef.current) {
+          tokenOverflowRetryRef.current = true;
+          setError("The session setup was too large, reconnecting with a lighter context.");
+          retry(EXPIRED_HANDLE_RETRY_MS, { minimal: true });
+          return;
+        }
+
+        // P3: a malformed request. Retrying sends the same bad frame.
+        if (protocolError) {
+          giveUp(reason ? `Gemini rejected the session: ${reason}` : "Gemini rejected the session setup.");
+          return;
+        }
+
+        // P5: anything else, backed off, as long as there is a session to return to.
+        if (sessionHandleRef.current && reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          reconnectAttemptsRef.current += 1;
+          retry(
+            Math.min(
+              RECONNECT_BASE_DELAY_MS * 2 ** (reconnectAttemptsRef.current - 1),
+              RECONNECT_MAX_DELAY_MS,
+            ),
+          );
+          return;
+        }
+
+        giveUp(
+          reason
+            ? `The call ended (code ${event.code}): ${reason}`
+            : `The call ended unexpectedly (code ${event.code}). Everything said is saved.`,
+        );
+      });
+    },
+    [handleMessage, persistHandle, teardownAudio],
+  );
+
+  openSocketRef.current = openSocket;
 
   const connect = useCallback(
     async (modeId: string) => {
       setError(null);
       setStatus("connecting");
+      // Turns here are only this call's live display buffer; the conversation
+      // itself is on the server, already rendered by the view.
       setTurns([]);
-      setToolActivity([]);
       turnsRef.current = [];
+      setToolActivity([]);
       draftsRef.current = [];
-      savingRef.current = false;
       closingRef.current = false;
       relayErrorRef.current = null;
+      expectingReconnectRef.current = false;
+      reconnectAttemptsRef.current = 0;
+      tokenOverflowRetryRef.current = false;
+      invalidatedHandleRef.current = null;
+      attemptedHandleRef.current = null;
+      modeIdRef.current = modeId;
+      clearTimers();
 
-      let setup: unknown;
       try {
-        const response = await fetch(`/api/talk/config?mode=${encodeURIComponent(modeId)}`, {
-          cache: "no-store",
-        });
-        const body = (await response.json()) as { setup?: unknown; error?: string };
-        if (!response.ok || !body.setup) {
-          throw new Error(body.error || "Could not build the session config.");
-        }
-        setup = body.setup;
+        const body = await loadConfig(modeId, false);
+        setupRef.current = body.setup ?? null;
+        seedTurnsRef.current = body.seedTurns ?? [];
+        // A handle stored on disk means a call was interrupted (reload, crash)
+        // rather than ended, so pressing Call rejoins it.
+        sessionHandleRef.current = body.handle ?? null;
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not build the session config.");
         setStatus("error");
@@ -465,62 +711,64 @@ export function useGeminiLive({
         return;
       }
 
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(`${protocol}//${window.location.host}/api/talk/ws`);
-      socket.binaryType = "arraybuffer";
-      socketRef.current = socket;
-
-      socket.addEventListener("open", () => socket.send(JSON.stringify({ setup })));
-      socket.addEventListener("message", (event) => void handleMessage(event));
-      socket.addEventListener("error", () => {
-        if (!closingRef.current) {
-          setError("The connection to Gemini Live failed.");
-          setStatus("error");
-        }
-      });
-      socket.addEventListener("close", (event) => {
-        socketRef.current = null;
-        teardownAudio();
-        setStatus((current) => {
-          if (current === "error" || closingRef.current || relayErrorRef.current) return current;
-          const detail = event.reason?.trim();
-          setError(
-            detail && detail !== "Gemini session rejected"
-              ? `The session closed unexpectedly (code ${event.code}): ${detail}`
-              : `The session closed unexpectedly (code ${event.code}). The transcript was saved.`,
-          );
-          return "error";
-        });
-        if (!closingRef.current) void saveTranscript();
-      });
+      void openSocket({ isReconnect: false });
     },
-    [handleMessage, saveTranscript, teardownAudio],
+    [clearTimers, loadConfig, openSocket, teardownAudio],
   );
 
   const disconnect = useCallback(async (): Promise<EndedSession> => {
     closingRef.current = true;
+    clearTimers();
+
     const socket = socketRef.current;
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "Session ended");
     socketRef.current = null;
     teardownAudio();
 
-    const saved = await saveTranscript();
+    // A deliberate hangup ends the Gemini session too: the stored handle only
+    // exists to survive a reload or a crash mid-call.
+    sessionHandleRef.current = null;
+    attemptedHandleRef.current = null;
+    persistHandle(null);
+
     setStatus("ended");
-    return { savedPath: saved.path, filed: saved.filed, filing: saved.filing, drafts: draftsRef.current };
-  }, [saveTranscript, teardownAudio]);
+    // Turns are persisted by the relay as the call happens, so hanging up has
+    // nothing left to save.
+    return { savedPath: null, filed: false, filing: false, drafts: draftsRef.current };
+  }, [clearTimers, persistHandle, teardownAudio]);
 
+  /**
+   * Typed input, and attachments, into a running call.
+   *
+   * `silent` is for text the artist did not type (a file's extracted contents,
+   * say): the model should hear it, but it should not appear as their turn.
+   */
   const sendText = useCallback(
-    (text: string) => {
-      const clean = text.trim();
+    (
+      text: string,
+      image?: { mimeType: string; data: string },
+      options?: { silent?: boolean },
+    ) => {
       const socket = socketRef.current;
-      if (!clean || !socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-      appendWholeTurn(userLabel, clean);
-      socket.send(
-        JSON.stringify({
-          clientContent: { turns: [{ role: "user", parts: [{ text: clean }] }], turnComplete: true },
-        }),
-      );
+      // Live takes a still image on the video channel; there is no inlineData
+      // path for documents, which is why everything else arrives as text.
+      if (image) {
+        socket.send(JSON.stringify({ realtimeInput: { video: image } }));
+        lastActivityRef.current = Date.now();
+      }
+
+      const clean = text.trim();
+      if (!clean) return;
+
+      if (!options?.silent) appendWholeTurn(userLabel, clean);
+      else lastActivityRef.current = Date.now();
+
+      // realtimeInput rather than clientContent: it keeps typed turns
+      // distinguishable from history seeding, which the relay must never
+      // persist, and it is the shape this Live model expects for live input.
+      socket.send(JSON.stringify({ realtimeInput: { text: clean } }));
     },
     [appendWholeTurn, userLabel],
   );
@@ -562,20 +810,8 @@ export function useGeminiLive({
     return () => window.clearInterval(timer);
   }, [disconnect, status]);
 
-  // A closed tab must not lose the conversation.
-  useEffect(() => {
-    const flush = () => {
-      if (savingRef.current || turnsRef.current.length === 0) return;
-      savingRef.current = true;
-      const payload = JSON.stringify({
-        turns: turnsRef.current.map((turn) => ({ speaker: turn.speaker, text: turn.text })),
-      });
-      navigator.sendBeacon("/api/talk/transcripts", new Blob([payload], { type: "application/json" }));
-    };
-
-    window.addEventListener("pagehide", flush);
-    return () => window.removeEventListener("pagehide", flush);
-  }, []);
+  // No pagehide beacon: the relay flushes whatever was mid-sentence when the
+  // browser socket dies, which covers a closed tab better than a beacon can.
 
   return {
     status,

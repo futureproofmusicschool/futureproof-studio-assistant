@@ -12,7 +12,10 @@ import { DATA_ROOT, REPO_ROOT, dataPath, repoPath } from "@/lib/paths";
 const READABLE_DIRECTORIES = [
   { area: "memory", relative: "memory", storage: "data" },
   { area: "plans", relative: "plans", storage: "data" },
+  { area: "transcripts", relative: path.join("conversation", "transcripts"), storage: "data" },
   { area: "transcripts", relative: path.join("voice", "transcripts"), storage: "data" },
+  { area: "transcripts", relative: path.join("chat", "transcripts"), storage: "data" },
+  { area: "research", relative: "research", storage: "data" },
   { area: "rules", relative: path.join(".claude", "rules"), storage: "data" },
   { area: "templates", relative: path.join("interviews", "templates"), storage: "repo" },
   { area: "rules", relative: path.join(".claude", "rules"), storage: "repo" },

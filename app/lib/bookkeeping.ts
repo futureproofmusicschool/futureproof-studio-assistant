@@ -168,9 +168,9 @@ type FilingPayload = {
   semanticNotes: { slug: string; category: string; title: string; body: string }[] | null;
 };
 
-function buildFilingPrompt(transcript: string) {
+function buildFilingPrompt(transcript: string, sessionKind: string) {
   return [
-    "You are the studio assistant's bookkeeper. A voice session just ended. File it into the memory system.",
+    `You are the studio assistant's bookkeeper. A ${sessionKind} session just ended. File it into the memory system.`,
     "",
     "## The memory system's own rules",
     readOrEmpty(MEMORY_RULES_PATH) || "(the rules file could not be read; use your judgement)",
@@ -229,13 +229,21 @@ async function callFlash(prompt: string): Promise<FilingPayload> {
  */
 export async function fileTranscript(transcriptRelativePath: string): Promise<FiledResult> {
   const absolute = path.resolve(DATA_ROOT, transcriptRelativePath);
-  const transcriptRoot = path.join(DATA_ROOT, "voice", "transcripts");
-  if (absolute !== transcriptRoot && !absolute.startsWith(`${transcriptRoot}${path.sep}`)) {
-    throw new Error("Only voice transcripts can be filed.");
+  const transcriptRoots = [
+    { root: path.join(DATA_ROOT, "conversation", "transcripts"), kind: "studio" },
+    // Legacy roots, from before voice and text shared one thread.
+    { root: path.join(DATA_ROOT, "voice", "transcripts"), kind: "voice" },
+    { root: path.join(DATA_ROOT, "chat", "transcripts"), kind: "text chat" },
+  ];
+  const matched = transcriptRoots.find(
+    ({ root }) => absolute === root || absolute.startsWith(`${root}${path.sep}`),
+  );
+  if (!matched) {
+    throw new Error("Only voice or chat transcripts can be filed.");
   }
 
   const transcript = fs.readFileSync(absolute, "utf8").slice(0, MAX_TRANSCRIPT_BYTES);
-  const payload = await callFlash(buildFilingPrompt(transcript));
+  const payload = await callFlash(buildFilingPrompt(transcript, matched.kind));
 
   const now = new Date();
   const result: FiledResult = { episodic: null, semantic: [], workingSelfUpdated: false };

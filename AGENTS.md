@@ -81,16 +81,19 @@ Knowledge is physically stored under the external student-data root (macOS defau
 
 **`board/board.json` is the single source of truth for tasks.** The app (port 3017) renders the same file; I manage tasks by editing it directly. Workflow lists: today, in-progress, next, done. Lists are data: add backlog lists per project as needed. Any question about tasks or priorities gets answered from this file.
 
-## The Talk tab (voice)
+## The conversation (one thread, typed or spoken)
 
-Voice lives in the app's Talk tab (`/talk`, port 3017), backed by Gemini Live. One surface: the artist speaks or types, the assistant answers out loud, both sides stream as text. The app is the only server; it relays the Live socket at `/api/talk/ws` so `GEMINI_API_KEY` never reaches the browser.
+The Talk tab (`/talk`, port 3017) is the whole conversation surface: a text window with a Call button. Typing goes to **Gemini Pro** over SSE; pressing Call opens **Gemini Live** and both sides of the call land in the same thread. There is no session to start or end, and no separate chat tab: the thread is the assistant's continuous conversation with the artist.
 
-- **Base prompt:** `voice/prompt.md`. Session modes are `interviews/templates/*.md`. `/api/talk/config` assembles prompt + `memory/working-self.md` + a board/contacts digest + the mode, fresh each session, so prompt and memory edits need no rebuild.
-- **The voice agent's tools:** `googleSearch` (native), `search_studio_files` and `read_studio_file` (read-only, whitelisted to memory, plans, transcripts, templates, `.claude/rules`, the board, contacts, and the soul document), `search_reference` and `read_reference` (the reference shelf, see below), `draft_email`, `save_memory`, and the Ableton toolset (see "Ableton" below). The board and contacts are readable by voice but not writable.
-- **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` after a session and say what is waiting.
-- **`save_memory`** writes one episodic, semantic, or procedural file on the spot, for the "remember that" moment. No model call; the voice agent already knows what it wants to keep.
-- **Transcripts** land in `voice/transcripts/YYYY-MM-DD-HHMMSS.md`, including typed turns and `**Tool:**` markers. They are **filed into memory automatically** when the session ends (see "Bookkeeping" below); CLI sessions audit and deepen memory rather than being required for it.
-- **Sessions hang up on their own after 5 quiet minutes** (no speech, typing, or tool calls; mic level doesn't count), with a 60-second countdown and a "Keep it open" button. The transcript still saves. This caps Live-session cost when a session is left open.
+- **The thread lives on the server**, not the browser: `conversation/thread.jsonl` in the external data root, an append-only log of `{id, role, mode, text, createdAt, attachment?}`. `app/lib/conversation-store.js` is deliberately plain CommonJS with no in-memory state, because `app/server.js` requires it directly while Next bundles a second copy for the routes; anything cached would fork between the two. Text turns are written by `/api/chat`, voice turns by the relay.
+- **Voice turns are persisted by the relay**, which parses the Live frames it is already forwarding and flushes merged turns on `turnComplete` (and whatever is mid-sentence when the socket dies, so a closed tab loses nothing). The browser never posts a transcript.
+- **Calls survive Gemini's ~10 minute connection limit.** The setup sends `sessionResumption` and `contextWindowCompression`; the client collects resumption handles, and when Gemini sends `goAway` (measured: at ~9 minutes, with `timeLeft: "50s"`) it closes 1.5s early and reopens with the handle. The audio graph stays warm across the gap, so a rotation is a blip. `app/hooks/useGeminiLive.ts` classifies every close: planned rotation, expired handle (silent retry without it), oversized setup (one minimal retry), protocol error (stop), anything else (backoff, five attempts). The relay forwards Gemini's real close code and reason so that classification is possible.
+- **A fresh call is seeded with the recent thread** (`clientContent` + `historyConfig.initialHistoryInClientContent`, ~4000 chars), so speaking picks up what was typed. Seeding is skipped when resuming, and the relay never persists seed frames, or the thread would double on every call.
+- **Base prompt:** `voice/prompt.md` (shared by both channels; a text addendum lifts the speech-only formatting rules). Session modes are `interviews/templates/*.md`, offered in the Call button's popover: **modes shape calls, not typing.**
+- **Tools are the same either way:** `googleSearch`, `search_studio_files`, `read_studio_file`, `search_reference`, `read_reference`, `draft_email`, `save_memory`, and the Ableton toolset. Live tool calls surface in the browser and hop through `/api/talk/tools`; text tool calls run in-process. Deep research is text-only.
+- **Uploads:** images, PDFs, text files, and MIDI (`/api/conversation/upload`). PDFs and text are extracted, `.mid` files are parsed and analyzed for key and chords (`app/lib/midi/`), and the derived text is stored with the turn. The binary rides along only on the turn being asked about; later replays are a marker plus that text, so a file stays useful without re-uploading it.
+- **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` and say what is waiting.
+- **Calls hang up on their own after 5 quiet minutes** (no speech, typing, or tool calls; mic level doesn't count), with a 60-second countdown and a "Keep it open" button. This caps Live cost when a call is left open; the thread is unaffected.
 
 ## Ableton (Live control)
 
@@ -134,8 +137,8 @@ The external data root's `reference/` folder holds full manuals — sample libra
 
 `app/lib/bookkeeping.ts` runs on Gemini Flash through the student's own key, so "the assistant that never forgets" does not quietly require a second paid account.
 
-- **Trigger:** saving a transcript (`POST /api/talk/transcripts`, both the session-end and the page-unload beacon path). Failures log server-side and never cost the artist the transcript that is already on disk; the response carries `filed` / `filing` so the ended panel can say what actually happened.
-- **What it writes:** an episodic file in `memory/episodic/`, a rewritten `memory/working-self.md` when the session genuinely changed a project's state (capped at 100 lines), and semantic notes only when clearly warranted.
+- **Trigger:** a clock, not a session end, because the conversation no longer has one. `app/server.js` calls `POST /api/conversation/file?auto=1` shortly after boot and hourly after that; it files whole days that are already over, and is idempotent via a marker in `conversation/state.json`. The artist can also press "File to memory now", which files everything up to the moment.
+- **What it writes:** a day's markdown in `conversation/transcripts/YYYY-MM-DD.md`, then an episodic file in `memory/episodic/`, a rewritten `memory/working-self.md` when the day genuinely changed a project's state (capped at 100 lines), and semantic notes only when clearly warranted. The markdown is written before the model is asked to read it, so a failed filing costs a memory note and never the record.
 - **Audit trail:** every machine-written file carries `filed-by: gemini-flash` and a `source:` line pointing at the transcript.
 
 ## Desktop app (Electron)
@@ -146,7 +149,7 @@ The external data root's `reference/` folder holds full manuals — sample libra
 
 Public code lives in this checkout. Student-owned state lives under one external data root (macOS default: `~/Library/Application Support/Futureproof Studio Assistant/`; override with `STUDIO_ASSISTANT_DATA_DIR`):
 
-- **External:** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/`, `instruments/`, `reference/`, `voice/prompt.md`, `voice/transcripts/`, `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, and `.env`.
+- **External:** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/`, `instruments/`, `reference/`, `research/`, `conversation/` (the thread, its uploads, and the daily transcripts), `voice/prompt.md`, `voice/transcripts/` (legacy), `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, and `.env`.
 - **Compatibility links:** `scripts/init-data.mjs` migrates legacy repo-local data without overwriting it, then creates ignored links at the familiar paths required by coding-client discovery. The app reads the external root directly and does not depend on those links.
 - **Tracked:** all code, generic docs, `instruments/README.md` + `instruments/example-percussion.md`, `reference/README.md`, and `examples/` starter copies.
 - **Rule for agents:** never write a personal fact (names, projects, collaborators, machine paths) into a tracked file. Personal identity and studio facts belong in `CLAUDE.local.md` and the other gitignored files. A pre-commit hook greps staged changes as a seatbelt; treat a hook failure as a real leak, not noise.
