@@ -25,9 +25,11 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: `Unknown session mode "${requested}".` }, { status: 400 });
     }
 
+    const state = readState();
     return NextResponse.json({
       setup: await buildSetupMessage(mode.id, config.name, minimal),
-      handle: readState().liveHandle ?? null,
+      handle: state.liveHandle ?? null,
+      toolOperationNamespace: state.liveToolOperationNamespace ?? null,
       seedTurns: minimal ? [] : selectSeedTurns(readTurns()),
       modes,
       mode: mode.id,

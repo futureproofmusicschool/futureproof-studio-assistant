@@ -39,8 +39,8 @@ export type GeminiPart = {
   thoughtSignature?: string;
   /** Base64 file bytes: images and PDFs the artist attached to a turn. */
   inlineData?: { mimeType: string; data: string };
-  functionCall?: { name: string; args: Record<string, unknown> };
-  functionResponse?: { name: string; response: Record<string, unknown> };
+  functionCall?: { id?: string; name: string; args: Record<string, unknown> };
+  functionResponse?: { id?: string; name: string; response: Record<string, unknown> };
 };
 
 export type GeminiContent = { role: "user" | "model"; parts: GeminiPart[] };

@@ -39,9 +39,12 @@ export function AppShell({ name, tabs, children }: AppShellProps) {
         </nav>
         <div className="app-header-status">
           <WorkingIndicator />
-          <div className="local-status" title="This app reads local repository files">
+          <div
+            className="local-status"
+            title="The server runs only on this machine; connected Google services are managed in Settings"
+          >
             <span aria-hidden="true" />
-            Local
+            Local app
           </div>
         </div>
       </header>

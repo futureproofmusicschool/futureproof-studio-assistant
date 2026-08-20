@@ -1,6 +1,8 @@
 import { AbletonPanel } from "@/components/AbletonPanel";
 import { ComposerPanel } from "@/components/ComposerPanel";
 import { GeminiKeyPanel } from "@/components/GeminiKeyPanel";
+import { GoogleAccountPanel } from "@/components/GoogleAccountPanel";
+import { GoogleMigrationPanel } from "@/components/GoogleMigrationPanel";
 import { IdentityPanel } from "@/components/IdentityPanel";
 import { ReferencePanel } from "@/components/ReferencePanel";
 import { DATA_ROOT } from "@/lib/paths";
@@ -15,7 +17,7 @@ export default function SettingsPage() {
           <p className="eyebrow">Everything that is not a conversation</p>
           <h1>Settings</h1>
         </div>
-        <p>Identity, API access, Ableton Live, the MIDI composer, and the local reference shelf.</p>
+        <p>Identity, connected services, AI access, Ableton Live, the MIDI composer, and the local reference shelf.</p>
       </header>
 
       <div className="settings-body">
@@ -24,13 +26,25 @@ export default function SettingsPage() {
         <div className="settings-block">
           <h2>Personal data</h2>
           <p className="settings-block-hint">
-            Your identity, memory, projects, keys, contacts, transcripts, manuals, and instrument documents live
-            outside the app checkout so updates cannot replace them.
+            The task board, conversation, memory, keys, transcripts, manuals, and instrument documents stay on this
+            machine outside the checkout. Native Docs and the managed Contacts and History Sheet live in Google Drive;
+            reviewable email drafts live in Gmail.
           </p>
           <div className="data-location">
             <span>Stored on this machine</span>
             <code>{DATA_ROOT}</code>
           </div>
+        </div>
+
+        <div className="settings-block">
+          <h2>Google services</h2>
+          <p className="settings-block-hint">
+            Recommended setup uses Google connectors from Codex or Claude Code, with each capability checked on this
+            installation before it is enabled. Drive is required for Docs and outreach; Gmail is optional for drafts.
+            Direct Google OAuth remains available as an advanced self-hosted option.
+          </p>
+          <GoogleAccountPanel />
+          <GoogleMigrationPanel />
         </div>
 
         <div className="settings-block">

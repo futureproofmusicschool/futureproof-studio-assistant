@@ -12,6 +12,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const next = require("next");
 const { WebSocket, WebSocketServer } = require("ws");
@@ -20,6 +21,10 @@ const { WebSocket, WebSocketServer } = require("ws");
 const conversation = require("./lib/conversation-store.js");
 
 const PORT = Number(process.env.PORT || 3017);
+const HOST = "127.0.0.1";
+const APP_ORIGIN = `http://${HOST}:${PORT}`;
+const ALLOWED_HOSTS = new Set([`${HOST}:${PORT}`, `localhost:${PORT}`, `[::1]:${PORT}`]);
+const ALLOWED_ORIGINS = new Set([APP_ORIGIN, `http://localhost:${PORT}`, `http://[::1]:${PORT}`]);
 const dev = process.env.NODE_ENV !== "production";
 const REPO_ROOT = path.join(__dirname, "..");
 const DATA_ROOT = process.env.STUDIO_ASSISTANT_DATA_DIR?.trim()
@@ -32,9 +37,201 @@ const DATA_ROOT = process.env.STUDIO_ASSISTANT_DATA_DIR?.trim()
           process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
           "futureproof-studio-assistant",
         );
+const CONTACT_LOCK_DIR = path.join(DATA_ROOT, "google", "contact-locks");
+const PROCESS_STARTED_AT = Date.now() - process.uptime() * 1000;
 const ENV_PATH = path.join(DATA_ROOT, ".env");
 const GEMINI_URL =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
+
+function isLoopbackAddress(value) {
+  const address = String(value || "").toLowerCase();
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
+function allowedHost(request) {
+  return ALLOWED_HOSTS.has(String(request.headers.host || "").trim().toLowerCase());
+}
+
+function allowedOrigin(request, required = false) {
+  const value = request.headers.origin;
+  if (!value) return !required;
+  try {
+    const origin = new URL(value);
+    return (
+      !origin.username &&
+      !origin.password &&
+      origin.pathname === "/" &&
+      !origin.search &&
+      !origin.hash &&
+      ALLOWED_ORIGINS.has(origin.origin)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function allowedLocalRequest(request, options = {}) {
+  return (
+    isLoopbackAddress(request.socket?.remoteAddress) &&
+    allowedHost(request) &&
+    allowedOrigin(request, options.requireOrigin === true)
+  );
+}
+
+function rejectHttp(response) {
+  response.writeHead(403, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "close",
+  });
+  response.end('{"error":"Studio Assistant only accepts requests from this machine."}\n');
+}
+
+function rejectUpgrade(socket) {
+  socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+  socket.destroy();
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
+function cleanupDeadContactLocks() {
+  fs.mkdirSync(CONTACT_LOCK_DIR, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(CONTACT_LOCK_DIR, 0o700);
+  } catch {
+    // Some filesystems do not expose Unix permission bits.
+  }
+
+  const barrierToken = crypto.randomUUID();
+  const barrierPath = path.join(
+    CONTACT_LOCK_DIR,
+    `startup-${process.pid}-${barrierToken}.barrier`,
+  );
+  const barrier = {
+    version: 1,
+    pid: process.pid,
+    token: barrierToken,
+    createdAt: new Date().toISOString(),
+  };
+  const descriptor = fs.openSync(barrierPath, "wx", 0o600);
+  try {
+    try {
+      fs.writeFileSync(descriptor, `${JSON.stringify(barrier)}\n`, "utf8");
+      fs.fsyncSync(descriptor);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+
+    const entries = fs.readdirSync(CONTACT_LOCK_DIR, { withFileTypes: true });
+
+    // Barrier names are unique and never reused. Remove barriers left by dead
+    // startup processes while our own barrier keeps route handlers from
+    // creating a replacement account lock during the cleanup below.
+    for (const entry of entries) {
+      const barrierMatch = entry.name.match(/^startup-([0-9]+)-[a-f0-9-]+\.barrier$/);
+      if (!entry.isFile() || !barrierMatch || entry.name === path.basename(barrierPath)) continue;
+      const otherBarrierPath = path.join(CONTACT_LOCK_DIR, entry.name);
+      let otherBarrier = null;
+      let otherStats;
+      try {
+        otherStats = fs.statSync(otherBarrierPath);
+        const parsed = JSON.parse(fs.readFileSync(otherBarrierPath, "utf8"));
+        if (
+          parsed?.version === 1 &&
+          Number.isInteger(parsed.pid) &&
+          typeof parsed.token === "string" && parsed.token.length > 0 &&
+          typeof parsed.createdAt === "string" && !Number.isNaN(Date.parse(parsed.createdAt))
+        ) otherBarrier = parsed;
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        if (!(error instanceof SyntaxError)) throw error;
+      }
+
+      const filenamePid = Number(barrierMatch[1]);
+      const reusedCurrentPid =
+        otherBarrier?.pid === process.pid &&
+        Date.parse(otherBarrier.createdAt) < PROCESS_STARTED_AT - 1_000;
+      const deadOwner =
+        filenamePid === process.pid ||
+        !processIsAlive(filenamePid) ||
+        (otherBarrier && (reusedCurrentPid || !processIsAlive(otherBarrier.pid)));
+      const abandonedIncomplete =
+        !otherBarrier && otherStats && Date.now() - otherStats.mtimeMs >= 5_000;
+      if (!deadOwner && !abandonedIncomplete) continue;
+
+      try {
+        fs.unlinkSync(otherBarrierPath);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^[a-f0-9]{64}\.lock$/.test(entry.name)) continue;
+      const lockPath = path.join(CONTACT_LOCK_DIR, entry.name);
+      let source;
+      let stats;
+      try {
+        source = fs.readFileSync(lockPath, "utf8");
+        stats = fs.statSync(lockPath);
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+
+      let lock = null;
+      try {
+        const parsed = JSON.parse(source);
+        if (
+          parsed?.version === 1 &&
+          Number.isInteger(parsed.pid) &&
+          typeof parsed.token === "string" && parsed.token.length > 0 &&
+          typeof parsed.createdAt === "string" && !Number.isNaN(Date.parse(parsed.createdAt))
+        ) lock = parsed;
+      } catch {
+        // An interrupted exclusive-open/write is handled by the age check below.
+      }
+
+      const reusedCurrentPid =
+        lock?.pid === process.pid && Date.parse(lock.createdAt) < PROCESS_STARTED_AT - 1_000;
+      const deadOwner = lock && (reusedCurrentPid || !processIsAlive(lock.pid));
+      const abandonedIncomplete = !lock && Date.now() - stats.mtimeMs >= 5_000;
+      if (!deadOwner && !abandonedIncomplete) continue;
+
+      // The startup barrier prevents a route handler from replacing this path
+      // between validation and unlink. The re-read also protects against an
+      // already-running process that acquired just before the barrier appeared.
+      try {
+        const currentSource = fs.readFileSync(lockPath, "utf8");
+        const currentStats = fs.statSync(lockPath);
+        if (
+          currentSource === source &&
+          currentStats.ino === stats.ino &&
+          currentStats.mtimeMs === stats.mtimeMs
+        ) {
+          fs.unlinkSync(lockPath);
+        }
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+  } finally {
+    try {
+      fs.unlinkSync(barrierPath);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+}
 
 function parseEnv(source) {
   const values = {};
@@ -287,11 +484,16 @@ async function main() {
     cwd: REPO_ROOT,
     stdio: "inherit",
   });
+  cleanupDeadContactLocks();
   const app = next({ dev, dir: __dirname });
   await app.prepare();
   const handle = app.getRequestHandler();
 
   const server = http.createServer((request, response) => {
+    if (!allowedLocalRequest(request)) {
+      rejectHttp(response);
+      return;
+    }
     handle(request, response);
   });
 
@@ -299,6 +501,11 @@ async function main() {
   talkSockets.on("connection", relay);
 
   server.on("upgrade", (request, socket, head) => {
+    if (!allowedLocalRequest(request, { requireOrigin: true })) {
+      rejectUpgrade(socket);
+      return;
+    }
+
     const pathname = new URL(request.url, "http://localhost").pathname;
 
     if (pathname === "/api/talk/ws") {
@@ -317,8 +524,8 @@ async function main() {
     socket.destroy();
   });
 
-  server.listen(PORT, () => {
-    console.log(`The app is listening at http://localhost:${PORT}`);
+  server.listen(PORT, HOST, () => {
+    console.log(`The app is listening at ${APP_ORIGIN}`);
     scheduleFiling();
   });
 }

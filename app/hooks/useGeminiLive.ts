@@ -106,6 +106,26 @@ function bytesToBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
+function stableLiveToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableLiveToolValue);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableLiveToolValue(nested)]),
+    );
+  }
+  return value;
+}
+
+async function fallbackLiveToolCallId(name: string, args: Record<string, unknown>) {
+  const bytes = new TextEncoder().encode(
+    `${name}\0${JSON.stringify(stableLiveToolValue(args))}`,
+  );
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `fallback-${Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
 class PcmPlayer {
   private nextStartTime = 0;
   private sources = new Set<AudioBufferSourceNode>();
@@ -187,6 +207,7 @@ export function useGeminiLive({
   const closingRef = useRef(false);
   const relayErrorRef = useRef<string | null>(null);
   const lastActivityRef = useRef(0);
+  const toolOperationNamespaceRef = useRef<string | null>(null);
   const onAutoEndRef = useRef(onAutoEnd);
   onAutoEndRef.current = onAutoEnd;
 
@@ -205,11 +226,14 @@ export function useGeminiLive({
   const reconnectTimerRef = useRef<number | null>(null);
   const openSocketRef = useRef<((options: { isReconnect: boolean; minimal?: boolean }) => void) | null>(null);
 
-  const persistHandle = useCallback((handle: string | null) => {
+  const persistHandle = useCallback((handle: string | null, operationNamespace = toolOperationNamespaceRef.current) => {
     void fetch("/api/conversation/handle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: handle ?? "" }),
+      body: JSON.stringify({
+        handle: handle ?? "",
+        operationNamespace: operationNamespace ?? "",
+      }),
     }).catch(() => {
       // A handle that fails to persist only costs resumption after a reload.
     });
@@ -281,7 +305,8 @@ export function useGeminiLive({
   const runToolCall = useCallback(
     async (call: FunctionCall) => {
       const name = call.name || "unknown";
-      const activityId = call.id || `${name}-${Date.now()}`;
+      const providerCallId = call.id?.trim();
+      const activityId = providerCallId || `${name}-${Date.now()}`;
       setToolActivity((current) => [...current, { id: activityId, name, status: "running" }]);
       appendWholeTurn(TOOL_SPEAKER, `${name} running`);
 
@@ -295,11 +320,17 @@ export function useGeminiLive({
           typeof call.args === "string"
             ? (JSON.parse(call.args) as Record<string, unknown>)
             : ((call.args as Record<string, unknown>) ?? {});
+        if (!toolOperationNamespaceRef.current) {
+          toolOperationNamespaceRef.current = crypto.randomUUID();
+        }
+        const operationId = `gemini-live:${toolOperationNamespaceRef.current}:${
+          providerCallId || (await fallbackLiveToolCallId(name, args))
+        }`;
 
         const response = await fetch("/api/talk/tools", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, args }),
+          body: JSON.stringify({ name, args, operationId }),
         });
         const body = (await response.json()) as { result?: unknown; error?: string };
 
@@ -309,9 +340,14 @@ export function useGeminiLive({
           return;
         }
 
-        const result = body.result as { path?: string; sent?: boolean } | undefined;
-        if (name === "draft_email" && result?.path) {
-          draftsRef.current = [...draftsRef.current, result.path];
+        const result = body.result as
+          | { path?: string; draftId?: string; webViewLink?: string; sent?: boolean }
+          | undefined;
+        if (name === "draft_email" && result?.draftId) {
+          draftsRef.current = [
+            ...draftsRef.current,
+            result.webViewLink ?? `Gmail draft ${result.draftId}`,
+          ];
         }
 
         settle("done");
@@ -503,6 +539,7 @@ export function useGeminiLive({
     const body = (await response.json()) as {
       setup?: Record<string, unknown>;
       handle?: string | null;
+      toolOperationNamespace?: string | null;
       seedTurns?: SeedTurn[];
       error?: string;
     };
@@ -671,6 +708,7 @@ export function useGeminiLive({
       turnsRef.current = [];
       setToolActivity([]);
       draftsRef.current = [];
+      toolOperationNamespaceRef.current = null;
       closingRef.current = false;
       relayErrorRef.current = null;
       expectingReconnectRef.current = false;
@@ -688,6 +726,14 @@ export function useGeminiLive({
         // A handle stored on disk means a call was interrupted (reload, crash)
         // rather than ended, so pressing Call rejoins it.
         sessionHandleRef.current = body.handle ?? null;
+        const storedToolNamespace = body.toolOperationNamespace?.trim();
+        toolOperationNamespaceRef.current =
+          sessionHandleRef.current && storedToolNamespace
+            ? storedToolNamespace
+            : crypto.randomUUID();
+        // Older state files have only the handle. Persist the namespace now so
+        // another reload of this resumed call will keep the same operation ids.
+        if (sessionHandleRef.current) persistHandle(sessionHandleRef.current);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Could not build the session config.");
         setStatus("error");
@@ -713,7 +759,7 @@ export function useGeminiLive({
 
       void openSocket({ isReconnect: false });
     },
-    [clearTimers, loadConfig, openSocket, teardownAudio],
+    [clearTimers, loadConfig, openSocket, persistHandle, teardownAudio],
   );
 
   const disconnect = useCallback(async (): Promise<EndedSession> => {
@@ -729,7 +775,8 @@ export function useGeminiLive({
     // exists to survive a reload or a crash mid-call.
     sessionHandleRef.current = null;
     attemptedHandleRef.current = null;
-    persistHandle(null);
+    toolOperationNamespaceRef.current = null;
+    persistHandle(null, null);
 
     setStatus("ended");
     // Turns are persisted by the relay as the call happens, so hanging up has

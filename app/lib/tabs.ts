@@ -7,6 +7,7 @@ export type TabDefinition = {
 export const TABS: TabDefinition[] = [
   { id: "talk", label: "Talk", href: "/talk" },
   { id: "board", label: "Board", href: "/board" },
+  { id: "docs", label: "Docs", href: "/docs" },
   { id: "contacts", label: "Contacts", href: "/contacts" },
 ];
 

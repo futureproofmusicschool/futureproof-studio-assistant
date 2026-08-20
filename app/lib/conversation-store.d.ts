@@ -25,6 +25,7 @@ export type ConversationTurn = {
 export type ConversationState = {
   liveHandle?: string | null;
   liveHandleUpdatedAt?: number;
+  liveToolOperationNamespace?: string | null;
   lastFiledTurnId?: string | null;
   lastFiledDay?: string | null;
 };

@@ -1,10 +1,13 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useCallback, useEffect, useState } from "react";
-import type { Contact, ContactLogEntry, Contacts, ContactStatus, LogChannel } from "@/lib/contacts";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import type { Contact, ContactLogAppend, Contacts, ContactStatus, LogChannel } from "@/lib/contacts";
 
 type ContactsViewProps = {
   initialContacts: Contacts;
+  initialError?: string | null;
+  identityInSheet?: boolean;
 };
 
 type RequestOptions = {
@@ -45,11 +48,19 @@ function todayInputValue() {
   ].join("-");
 }
 
-export function ContactsView({ initialContacts }: ContactsViewProps) {
+function createHistoryOperationId() {
+  return `h_${globalThis.crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+function refreshFailureMessage(error: Error) {
+  return `Contacts could not be refreshed, so the displayed data may be stale: ${error.message}`;
+}
+
+export function ContactsView({ initialContacts, initialError = null, identityInSheet = true }: ContactsViewProps) {
   const [contacts, setContacts] = useState(initialContacts);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [busy, setBusy] = useState(false);
 
   const editingContact = contacts.contacts.find((entry) => entry.id === editingId) ?? null;
@@ -60,8 +71,12 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
       if (!response.ok) throw new Error(await responseError(response));
       setContacts((await response.json()) as Contacts);
       setError(null);
+      return null;
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to refresh contacts");
+      const failure =
+        loadError instanceof Error ? loadError : new Error("Unable to refresh contacts");
+      setError(refreshFailureMessage(failure));
+      return failure;
     }
   }, []);
 
@@ -76,6 +91,7 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
       setBusy(true);
       setError(null);
       let requestError: Error | null = null;
+      let requestWarning: string | null = null;
       try {
         const response = await fetch(path, {
           method: options.method,
@@ -83,23 +99,38 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
           body: options.body === undefined ? undefined : JSON.stringify(options.body),
         });
         if (!response.ok) throw new Error(await responseError(response));
+        try {
+          const result = (await response.json()) as { warning?: unknown };
+          if (typeof result.warning === "string" && result.warning.trim()) {
+            requestWarning = result.warning.trim();
+          }
+        } catch {
+          // A successful mutation does not have to return JSON.
+        }
       } catch (mutationError) {
         requestError = mutationError instanceof Error ? mutationError : new Error("Request failed");
-        setError(requestError.message);
       }
-      await refresh();
+      const refreshError = await refresh();
+      // Refresh and mutation failures are independent. Keep both visible so a
+      // mutation warning cannot hide that the rendered contact data is stale.
+      const messages = [
+        requestError?.message,
+        requestWarning,
+        ...(refreshError ? [refreshFailureMessage(refreshError)] : []),
+      ].filter((message): message is string => Boolean(message));
+      setError(messages.length ? messages.join(" ") : null);
       setBusy(false);
       if (requestError) throw requestError;
     },
     [refresh],
   );
 
-  async function createContact(category: string, name: string, role: string) {
+  async function createContact(category: string, id: string, name: string, role: string, contact: string) {
     if (!name.trim()) return;
     try {
       await mutate("/api/contacts/entries", {
         method: "POST",
-        body: { name: name.trim(), category, role: role.trim() },
+        body: { id, name: name.trim(), category, role: role.trim(), contact: contact.trim() },
       });
       setAddingTo(null);
     } catch {
@@ -133,14 +164,21 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
           <h1>Contacts</h1>
         </div>
         <div className="board-heading-notes">
-          <p className="board-hint">Track who to reach, what was said, and what came back.</p>
+          <p className="board-hint">
+            {identityInSheet
+              ? "Names, contact methods, outreach status, and history stay together in your managed Google Sheet."
+              : "Names and contact methods stay in Google Contacts. Outreach status and history stay in your Google Sheet."}
+          </p>
         </div>
       </div>
 
       {error ? (
         <div className="error-banner" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={() => void refresh()}>Retry</button>
+          <div>
+            <Link href="/settings">Google settings</Link>
+            <button type="button" onClick={() => void refresh()}>Retry</button>
+          </div>
         </div>
       ) : null}
 
@@ -221,7 +259,7 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
               <InlineContactForm
                 disabled={busy}
                 onCancel={() => setAddingTo(null)}
-                onCreate={(name, role) => void createContact(category.id, name, role)}
+                onCreate={(id, name, role, contact) => void createContact(category.id, id, name, role, contact)}
               />
             ) : (
               <button className="add-card-button" onClick={() => setAddingTo(category.id)} type="button">
@@ -238,6 +276,7 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
           busy={busy}
           contact={editingContact}
           contacts={contacts}
+          identityInSheet={identityInSheet}
           onClose={() => setEditingId(null)}
           onDelete={async () => {
             await mutate(`/api/contacts/entries/${editingContact.id}`, { method: "DELETE" });
@@ -251,12 +290,9 @@ export function ContactsView({ initialContacts }: ContactsViewProps) {
             setEditingId(null);
           }}
           onAddLog={async (logEntry) => {
-            await mutate(`/api/contacts/entries/${editingContact.id}`, {
-              method: "PATCH",
-              body: {
-                log: [...editingContact.log, logEntry],
-                lastContact: logEntry.date,
-              },
+            await mutate(`/api/contacts/entries/${editingContact.id}/log`, {
+              method: "POST",
+              body: logEntry,
             });
           }}
         />
@@ -272,16 +308,18 @@ function InlineContactForm({
 }: {
   disabled: boolean;
   onCancel: () => void;
-  onCreate: (name: string, role: string) => void;
+  onCreate: (id: string, name: string, role: string, contact: string) => void;
 }) {
+  const [id] = useState(() => `k_${globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`);
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
+  const [contact, setContact] = useState("");
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") onCancel();
     if (event.key === "Enter" && !event.nativeEvent.isComposing && name.trim()) {
       event.preventDefault();
-      onCreate(name, role);
+      onCreate(id, name, role, contact);
     }
   }
 
@@ -304,6 +342,24 @@ function InlineContactForm({
         placeholder="Role (optional)"
         value={role}
       />
+      <input
+        aria-label="Contact method"
+        disabled={disabled}
+        onChange={(event) => setContact(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Email or contact method (optional)"
+        value={contact}
+      />
+      <div className="inline-card-actions">
+        <button
+          disabled={disabled || !name.trim()}
+          onClick={() => onCreate(id, name, role, contact)}
+          type="button"
+        >
+          Save contact
+        </button>
+        <button disabled={disabled} onClick={onCancel} type="button">Cancel</button>
+      </div>
       <p><kbd>Enter</kbd> save <kbd>Esc</kbd> cancel</p>
     </div>
   );
@@ -313,6 +369,7 @@ function ContactPanel({
   busy,
   contact,
   contacts,
+  identityInSheet,
   onAddLog,
   onClose,
   onDelete,
@@ -321,15 +378,16 @@ function ContactPanel({
   busy: boolean;
   contact: Contact;
   contacts: Contacts;
-  onAddLog: (logEntry: ContactLogEntry) => Promise<void>;
+  identityInSheet: boolean;
+  onAddLog: (logEntry: ContactLogAppend) => Promise<void>;
   onClose: () => void;
   onDelete: () => Promise<void>;
-  onSave: (
-    updates: Pick<Contact, "name" | "role" | "category" | "haveSamples" | "contact" | "notes"> & {
-      lastContact: string | null;
-    },
-  ) => Promise<void>;
+  onSave: (updates: Partial<Pick<
+    Contact,
+    "name" | "role" | "category" | "haveSamples" | "contact" | "notes" | "lastContact"
+  >>) => Promise<void>;
 }) {
+  type EditableField = "name" | "role" | "category" | "haveSamples" | "contact" | "notes" | "lastContact";
   const [name, setName] = useState(contact.name);
   const [role, setRole] = useState(contact.role);
   const [category, setCategory] = useState(contact.category);
@@ -341,6 +399,29 @@ function ContactPanel({
   const [logDate, setLogDate] = useState(todayInputValue());
   const [logChannel, setLogChannel] = useState<LogChannel>("email");
   const [logSummary, setLogSummary] = useState("");
+  const [logOperationId, setLogOperationId] = useState(createHistoryOperationId);
+  const [dirtyFields, setDirtyFields] = useState<Set<EditableField>>(() => new Set());
+  const dirtyFieldsRef = useRef<Set<EditableField>>(new Set());
+
+  function markDirty(field: EditableField) {
+    const next = new Set(dirtyFieldsRef.current);
+    next.add(field);
+    dirtyFieldsRef.current = next;
+    setDirtyFields(next);
+  }
+
+  useEffect(() => {
+    // Returning from Google refreshes the parent data. Untouched form
+    // controls follow those external edits; fields the artist actively changed
+    // here remain theirs until Save or Close.
+    if (!dirtyFields.has("name")) setName(contact.name);
+    if (!dirtyFields.has("role")) setRole(contact.role);
+    if (!dirtyFields.has("category")) setCategory(contact.category);
+    if (!dirtyFields.has("haveSamples")) setHaveSamples(contact.haveSamples);
+    if (!dirtyFields.has("contact")) setContactMethod(contact.contact);
+    if (!dirtyFields.has("notes")) setNotes(contact.notes);
+    if (!dirtyFields.has("lastContact")) setLastContact(dateInputValue(contact.lastContact));
+  }, [contact, dirtyFields]);
 
   useEffect(() => {
     function closeOnEscape(event: globalThis.KeyboardEvent) {
@@ -353,16 +434,23 @@ function ContactPanel({
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!name.trim()) return;
+    const updates: Partial<Pick<
+      Contact,
+      "name" | "role" | "category" | "haveSamples" | "contact" | "notes" | "lastContact"
+    >> = {};
+    if (dirtyFields.has("name")) updates.name = name.trim();
+    if (dirtyFields.has("role")) updates.role = role;
+    if (dirtyFields.has("category")) updates.category = category;
+    if (dirtyFields.has("haveSamples")) updates.haveSamples = haveSamples;
+    if (dirtyFields.has("contact")) updates.contact = contactMethod;
+    if (dirtyFields.has("notes")) updates.notes = notes;
+    if (dirtyFields.has("lastContact")) updates.lastContact = lastContact || null;
+    if (Object.keys(updates).length === 0) {
+      onClose();
+      return;
+    }
     try {
-      await onSave({
-        name: name.trim(),
-        role,
-        category,
-        haveSamples,
-        contact: contactMethod,
-        notes,
-        lastContact: lastContact || null,
-      });
+      await onSave(updates);
     } catch {
       return;
     }
@@ -371,9 +459,15 @@ function ContactPanel({
   async function addLog() {
     if (!logSummary.trim() || !logDate) return;
     try {
-      await onAddLog({ date: logDate, channel: logChannel, summary: logSummary.trim() });
+      await onAddLog({
+        operationId: logOperationId,
+        date: logDate,
+        channel: logChannel,
+        summary: logSummary.trim(),
+      });
+      setLogOperationId(createHistoryOperationId());
       setLogSummary("");
-      setLastContact(logDate);
+      if (!dirtyFieldsRef.current.has("lastContact")) setLastContact(logDate);
     } catch {
       return;
     }
@@ -395,20 +489,29 @@ function ContactPanel({
         <form className="card-form" onSubmit={submit}>
           <label>
             Name
-            <input onChange={(event) => setName(event.target.value)} required value={name} />
+            <input onChange={(event) => {
+              setName(event.target.value);
+              markDirty("name");
+            }} required value={name} />
           </label>
           <div className="form-row">
             <label>
               Role
               <input
-                onChange={(event) => setRole(event.target.value)}
+                onChange={(event) => {
+                  setRole(event.target.value);
+                  markDirty("role");
+                }}
                 placeholder="e.g. electric violin"
                 value={role}
               />
             </label>
             <label>
               Category
-              <select onChange={(event) => setCategory(event.target.value)} value={category}>
+              <select onChange={(event) => {
+                setCategory(event.target.value);
+                markDirty("category");
+              }} value={category}>
                 {contacts.categories.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
@@ -418,7 +521,10 @@ function ContactPanel({
           <label>
             How to reach them
             <input
-              onChange={(event) => setContactMethod(event.target.value)}
+              onChange={(event) => {
+                setContactMethod(event.target.value);
+                markDirty("contact");
+              }}
               placeholder="email, DM, mutual friend..."
               value={contactMethod}
             />
@@ -426,7 +532,10 @@ function ContactPanel({
           <label>
             Notes
             <textarea
-              onChange={(event) => setNotes(event.target.value)}
+              onChange={(event) => {
+                setNotes(event.target.value);
+                markDirty("notes");
+              }}
               placeholder="Context, angle, what to pitch"
               rows={4}
               value={notes}
@@ -435,12 +544,18 @@ function ContactPanel({
           <div className="form-row">
             <label>
               Last contact
-              <input onChange={(event) => setLastContact(event.target.value)} type="date" value={lastContact} />
+              <input onChange={(event) => {
+                setLastContact(event.target.value);
+                markDirty("lastContact");
+              }} type="date" value={lastContact} />
             </label>
             <label className="checkbox-label">
               <input
                 checked={haveSamples}
-                onChange={(event) => setHaveSamples(event.target.checked)}
+                onChange={(event) => {
+                  setHaveSamples(event.target.checked);
+                  markDirty("haveSamples");
+                }}
                 type="checkbox"
               />
               Samples in hand
@@ -450,12 +565,16 @@ function ContactPanel({
           <div className="panel-actions">
             {confirmDelete ? (
               <div className="delete-confirm">
-                <span>Delete this contact?</span>
-                <button disabled={busy} onClick={() => void onDelete()} type="button">Yes, delete</button>
+                <span>
+                  {identityInSheet
+                    ? "Remove this contact and its history from the managed Sheet?"
+                    : "Remove from outreach? The Google Contact stays in your address book."}
+                </span>
+                <button disabled={busy} onClick={() => void onDelete()} type="button">Yes, remove</button>
                 <button onClick={() => setConfirmDelete(false)} type="button">Cancel</button>
               </div>
             ) : (
-              <button className="delete-button" onClick={() => setConfirmDelete(true)} type="button">Delete</button>
+              <button className="delete-button" onClick={() => setConfirmDelete(true)} type="button">Remove from outreach</button>
             )}
             <button className="save-button" disabled={busy || !name.trim()} type="submit">
               {busy ? "Saving" : "Save changes"}

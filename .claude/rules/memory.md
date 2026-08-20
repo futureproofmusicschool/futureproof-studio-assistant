@@ -18,6 +18,14 @@ A snapshot of current state: active tracks, this week's focus, what's working an
 - **Update it** whenever the state of a project changes meaningfully
 - **Keep it under 100 lines.** Compress, don't truncate. Old state moves to episodic memory.
 
+## Memory is not the Docs tab
+
+Memory is the assistant's own notebook: the artist does not read it. Anything
+written *for* the artist (a list of people to contact, research findings, a
+plan, notes off a call) belongs in the dedicated Google Drive folder, where
+the Docs tab lists it and Google Docs opens it. Use `write_document` for those,
+and memory for what the assistant needs in order to pick up where it left off.
+
 ## Memory Types
 
 ### Episodic (what happened)

@@ -77,6 +77,17 @@ Knowledge is physically stored under the external student-data root (macOS defau
 
 **Memory is context, not authority.** Files record what was believed at the time. If what I'm hearing or seeing now contradicts a memory, trust the present and update the file.
 
+**Memory is mine, documents are the artist's.** A memory note is my own continuity and the artist never opens it. Anything they will want to read later goes in a document. See below.
+
+## Documents (the Docs tab)
+
+**Written output lives as native Google Docs in the app's dedicated Drive folder**, listed by the Docs tab (`/docs`, port 3017). A list of people to contact, research findings, a plan, options worked out in conversation, notes off a call: these are documents, not memory notes. Saying "I'll remember that" about a list is a failure; save it and say the title.
+
+- **Tools** (voice and text alike): `write_document` (create, or update by document ID, with `mode: append` to add to a list), `list_documents`, `read_document`. These tools use the connected Google account; local-file search does not search Drive.
+- **The Docs tab is a library and preview.** It lists the managed Google Docs, previews their contents, and opens the selected file in Google Docs for editing and sharing.
+- **Deep research reports land here too.** A finished `start_deep_research` run creates a cited Google Doc, so it shows up in the tab like anything else. The jobs file stays local in `research/`.
+- **Google owns document history and collaboration.** Do not build a second local revision system. Legacy markdown files in `documents/` can be imported once from Settings and remain untouched as a backup.
+
 ## The Board (task management)
 
 **`board/board.json` is the single source of truth for tasks.** The app (port 3017) renders the same file; I manage tasks by editing it directly. Workflow lists: today, in-progress, next, done. Lists are data: add backlog lists per project as needed. Any question about tasks or priorities gets answered from this file.
@@ -90,9 +101,9 @@ The Talk tab (`/talk`, port 3017) is the whole conversation surface: a text wind
 - **Calls survive Gemini's ~10 minute connection limit.** The setup sends `sessionResumption` and `contextWindowCompression`; the client collects resumption handles, and when Gemini sends `goAway` (measured: at ~9 minutes, with `timeLeft: "50s"`) it closes 1.5s early and reopens with the handle. The audio graph stays warm across the gap, so a rotation is a blip. `app/hooks/useGeminiLive.ts` classifies every close: planned rotation, expired handle (silent retry without it), oversized setup (one minimal retry), protocol error (stop), anything else (backoff, five attempts). The relay forwards Gemini's real close code and reason so that classification is possible.
 - **A fresh call is seeded with the recent thread** (`clientContent` + `historyConfig.initialHistoryInClientContent`, ~4000 chars), so speaking picks up what was typed. Seeding is skipped when resuming, and the relay never persists seed frames, or the thread would double on every call.
 - **Base prompt:** `voice/prompt.md` (shared by both channels; a text addendum lifts the speech-only formatting rules). Session modes are `interviews/templates/*.md`, offered in the Call button's popover: **modes shape calls, not typing.**
-- **Tools are the same either way:** `googleSearch`, `search_studio_files`, `read_studio_file`, `search_reference`, `read_reference`, `draft_email`, `save_memory`, and the Ableton toolset. Live tool calls surface in the browser and hop through `/api/talk/tools`; text tool calls run in-process. Deep research is text-only.
+- **Tools are the same either way:** `googleSearch`, the Google Docs and outreach-Sheet tools, `search_studio_files`, `read_studio_file`, `search_reference`, `read_reference`, `draft_email`, `save_memory`, and the Ableton toolset. Live tool calls surface in the browser and hop through `/api/talk/tools`; text tool calls run in-process. Deep research is text-only.
 - **Uploads:** images, PDFs, text files, and MIDI (`/api/conversation/upload`). PDFs and text are extracted, `.mid` files are parsed and analyzed for key and chords (`app/lib/midi/`), and the derived text is stored with the turn. The binary rides along only on the turn being asked about; later replays are a marker plus that text, so a file stays useful without re-uploading it.
-- **`draft_email` never sends.** It writes `outbox/YYYY-MM-DD-<slug>.md` and logs a "DRAFTED (not sent)" line against the contact. The artist reads the draft and sends it. Check `outbox/` and say what is waiting.
+- **`draft_email` never sends.** It creates a real Gmail draft and, when a contact ID is supplied, records the draft in the outreach Sheet. The artist reviews and sends it from Gmail. There is deliberately no email-send tool.
 - **Calls hang up on their own after 5 quiet minutes** (no speech, typing, or tool calls; mic level doesn't count), with a 60-second countdown and a "Keep it open" button. This caps Live cost when a call is left open; the thread is unaffected.
 
 ## Ableton (Live control)
@@ -145,14 +156,41 @@ The external data root's `reference/` folder holds full manuals — sample libra
 
 `desktop/` wraps the app in an Electron shell. It attaches to port 3017 if the server is already running, otherwise starts `app/server.js` itself (and stops it on quit); mic permission is granted to localhost only. `npm start --prefix desktop` runs it; `npm run pack --prefix desktop` builds a double-clickable app. A packaged app finds the repo via `~/.studio-assistant-desktop.json` (`{"repo": "/path/to/checkout"}`) and logs the server to `~/Library/Logs/studio-assistant-desktop.log`.
 
+## Zero-personal-information rule (mandatory)
+
+This is a public code repository. **Never write, paste, generate, stage, commit, or publish personal information anywhere in the repository or its Git metadata.** This applies to source code, comments, documentation, examples, tests, fixtures, screenshots, logs, generated artifacts, filenames, branch names, commit messages, and pull-request text.
+
+Personal information includes:
+
+- Real names, artist aliases, usernames, email addresses, phone numbers, physical addresses, and private URLs.
+- Student, customer, contact, collaborator, relationship, outreach, scheduling, and correspondence data.
+- Unreleased track or project names, private studio facts, owned gear or software lists, taste profiles, and session history.
+- Machine-specific details such as account names, hostnames, device names, absolute home-directory paths, and local network addresses.
+- Credentials and account identifiers such as API keys, tokens, OAuth credentials, account IDs, document IDs, spreadsheet IDs, and service configuration copied from a real account.
+
+Use unmistakably generic placeholders in public material: `Artist`, `artist@example.com`, `/path/to/project`, `example-id`, and similar values. Required upstream license and provenance notices may remain intact, but do not add real people as sample data or attribution without the user's explicit approval.
+
+When real information is needed for the app to work, put it in the external student-data root, a gitignored local file, an environment variable, or the connected account that owns it. If no approved private location exists, stop and ask before writing anything. Never solve the problem by force-adding an ignored file, weakening an ignore rule, skipping the hook, or using `--no-verify`.
+
+Before every commit or push:
+
+1. Inspect the staged diff for personal information and credentials.
+2. Verify that the configured Git author name and email are approved public or organization identities. If they are personal, stop and ask instead of creating the commit.
+3. Run `scripts/pre-commit-guard.sh`.
+4. Run `git ls-files -ci --exclude-standard`; it must return nothing.
+5. If anything private was ever committed, remove it from the current tree and tell the user that Git history may also need to be rewritten. Gitignoring an already tracked file is not enough.
+
+The guard is a seatbelt, not permission: a passing automated scan never overrides this rule. When uncertain, treat the information as private.
+
 ## Personal data lives outside the checkout
 
-Public code lives in this checkout. Student-owned state lives under one external data root (macOS default: `~/Library/Application Support/Futureproof Studio Assistant/`; override with `STUDIO_ASSISTANT_DATA_DIR`):
+Public code lives in this checkout. Private state is split deliberately:
 
-- **External:** `assistant.json`, `board/board.json`, `contacts/contacts.json`, `memory/`, `plans/`, `outbox/`, `instruments/`, `reference/`, `research/`, `conversation/` (the thread, its uploads, and the daily transcripts), `voice/prompt.md`, `voice/transcripts/` (legacy), `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, and `.env`.
-- **Compatibility links:** `scripts/init-data.mjs` migrates legacy repo-local data without overwriting it, then creates ignored links at the familiar paths required by coding-client discovery. The app reads the external root directly and does not depend on those links.
+- **Local external data root** (macOS default: `~/Library/Application Support/Futureproof Studio Assistant/`; override with `STUDIO_ASSISTANT_DATA_DIR`): `assistant.json`, `board/board.json`, `memory/`, `plans/`, `instruments/`, `reference/`, `research/`, `conversation/` (the thread, uploads, and daily transcripts), `voice/prompt.md`, `voice/transcripts/` (legacy), `.claude/rules/studio-context.md`, `CLAUDE.local.md`, `settings.json`, `.env`, and `connectors/` operation receipts and managed-file IDs. The private `google/` OAuth files exist only for the explicit Advanced direct-Google fallback. Legacy `contacts/contacts.json`, `documents/`, and `outbox/` may remain here after import as untouched backups.
+- **Connected Google account:** in normal Codex/Claude connector mode, the managed Sheet is canonical for contact identity, outreach status, categories, and history; written output lives in the managed Drive folder as native Google Docs; email drafts live in Gmail. Codex or Claude owns authorization and Studio Assistant stores no connector token. Advanced direct-Google mode retains the earlier Google Contacts identity store. The task board, conversation, memory, and AI configuration remain local.
+- **Compatibility links:** `scripts/init-data.mjs` migrates legacy repo-local data without overwriting it, then creates ignored links at familiar paths required by coding-client discovery. The live Google-backed features do not depend on the legacy contacts, documents, or outbox paths.
 - **Tracked:** all code, generic docs, `instruments/README.md` + `instruments/example-percussion.md`, `reference/README.md`, and `examples/` starter copies.
-- **Rule for agents:** never write a personal fact (names, projects, collaborators, machine paths) into a tracked file. Personal identity and studio facts belong in `CLAUDE.local.md` and the other gitignored files. A pre-commit hook greps staged changes as a seatbelt; treat a hook failure as a real leak, not noise.
+- **Rule for agents:** follow the mandatory zero-personal-information rule above. Personal identity and studio facts belong in `CLAUDE.local.md` and the other gitignored files. Treat a pre-commit hook failure as a real leak, not noise.
 
 ## Studio Context
 

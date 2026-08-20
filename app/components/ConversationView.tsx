@@ -38,6 +38,8 @@ type ResearchJob = {
   query: string;
   status: "in_progress" | "completed" | "failed";
   reportPath?: string;
+  documentId?: string;
+  webViewLink?: string;
 };
 
 type StreamEvent =
@@ -186,7 +188,7 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
             kind: "notice",
             text:
               polled.job.status === "completed"
-                ? `Deep research finished: "${polled.job.query}". Report saved to ${polled.job.reportPath}.`
+                ? `Deep research finished: "${polled.job.query}". Report saved to ${polled.job.webViewLink ?? polled.job.reportPath ?? "Google Docs"}.`
                 : `Deep research failed: "${polled.job.query}".`,
           });
         }

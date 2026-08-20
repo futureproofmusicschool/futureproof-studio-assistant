@@ -186,9 +186,9 @@ async function consumeModelStream(
   return collected;
 }
 
-async function runTool(name: string, args: Record<string, unknown>) {
+async function runTool(name: string, args: Record<string, unknown>, operationId: string) {
   if (isResearchTool(name)) return runResearchTool(name, args);
-  return runStudioTool(name, args);
+  return runStudioTool(name, args, { operationId });
 }
 
 export async function POST(request: Request) {
@@ -226,6 +226,9 @@ export async function POST(request: Request) {
   const history = readTurns({ limit: MODEL_HISTORY_TURNS });
   const userTurn = answerOnly ? null : appendTurn({ role: "user", mode: "text", text });
   const contents: GeminiContent[] = buildContents([...history, ...(userTurn ? [userTurn] : [])]);
+  const priorUserTurn = [...history].reverse().find((turn) => turn.role === "user");
+  const operationNamespace =
+    userTurn?.id ?? priorUserTurn?.id ?? `unpersisted-${crypto.randomUUID()}`;
 
   const assistantSegments: string[] = [];
   const toolTurns: { role: "tool"; mode: "text"; text: string }[] = [];
@@ -295,9 +298,18 @@ export async function POST(request: Request) {
           contents.push({ role: "model", parts: modelParts });
 
           const responses: GeminiPart[] = [];
-          for (const call of calls) {
+          for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
+            const call = calls[callIndex];
             emit({ type: "tool", name: call.functionCall.name, status: "running" });
-            const outcome = await runTool(call.functionCall.name, call.functionCall.args ?? {});
+            const providerCallId = call.functionCall.id?.trim();
+            const operationId = `gemini-text:${operationNamespace}:${
+              providerCallId || `${round}:${callIndex}`
+            }`;
+            const outcome = await runTool(
+              call.functionCall.name,
+              call.functionCall.args ?? {},
+              operationId,
+            );
             const failed = "error" in outcome;
             emit({ type: "tool", name: call.functionCall.name, status: failed ? "error" : "done" });
             toolTurns.push({
@@ -307,6 +319,7 @@ export async function POST(request: Request) {
             });
             responses.push({
               functionResponse: {
+                ...(providerCallId ? { id: providerCallId } : {}),
                 name: call.functionCall.name,
                 response: outcome as Record<string, unknown>,
               },

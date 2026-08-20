@@ -4,7 +4,12 @@ import { readAssistantConfig, writeAssistantConfig } from "@/lib/config";
 import { readAnthropicApiKey, readGeminiApiKey, writeAnthropicApiKey, writeGeminiApiKey } from "@/lib/env";
 import { listReferenceDocs } from "@/lib/reference";
 import { DATA_ROOT } from "@/lib/paths";
-import { readSettings, writeSettings, type ComposerBackend } from "@/lib/settings";
+import {
+  readSettings,
+  writeSettings,
+  type ComposerBackend,
+  type ConnectorHost,
+} from "@/lib/settings";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +40,7 @@ export async function PUT(request: Request) {
       geminiApiKey?: string;
       anthropicApiKey?: string;
       composerBackend?: string;
+      connectorHost?: string;
       assistantName?: string;
       userName?: string;
     };
@@ -53,6 +59,9 @@ export async function PUT(request: Request) {
       ...(typeof body.abletonHost === "string" ? { abletonHost: body.abletonHost } : {}),
       ...(typeof body.composerBackend === "string"
         ? { composer: { backend: body.composerBackend as ComposerBackend } }
+        : {}),
+      ...(typeof body.connectorHost === "string"
+        ? { connectors: { host: body.connectorHost as ConnectorHost } }
         : {}),
     });
 

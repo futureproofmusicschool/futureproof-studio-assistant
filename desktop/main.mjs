@@ -13,12 +13,30 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
 
 const PORT = Number(process.env.PORT || 3017);
-const APP_URL = `http://localhost:${PORT}/talk`;
-const APP_ORIGIN = `http://localhost:${PORT}`;
+const APP_ORIGIN = `http://127.0.0.1:${PORT}`;
+const APP_URL = `${APP_ORIGIN}/talk`;
 const STARTUP_TIMEOUT_MS = 90_000; // first dev compile can be slow
 const REPO_CONFIG_PATH = path.join(os.homedir(), ".studio-assistant-desktop.json");
 
 let serverProcess = null;
+
+function parsedAppUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === APP_ORIGIN ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsedExternalUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" || url.protocol === "mailto:" ? url : null;
+  } catch {
+    return null;
+  }
+}
 
 // Running from the repo (npm start in desktop/) the server sits next door;
 // the packaged .app instead reads the repo location from
@@ -37,22 +55,43 @@ function resolveServerDir() {
   return null;
 }
 
-function portAnswering() {
+function probeServer() {
   return new Promise((resolve) => {
-    const request = http.get({ host: "127.0.0.1", port: PORT, path: "/", timeout: 1500 }, (response) => {
-      response.resume();
-      resolve(true);
+    const request = http.get({ host: "127.0.0.1", port: PORT, path: "/api/health", timeout: 1500 }, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => {
+        if (body.length < 4096) body += chunk;
+      });
+      response.on("end", () => {
+        try {
+          const marker = JSON.parse(body);
+          resolve(
+            response.statusCode === 200 &&
+              marker?.app === "futureproof-studio-assistant" &&
+              marker?.protocol === 1
+              ? "studio"
+              : "occupied",
+          );
+        } catch {
+          resolve("occupied");
+        }
+      });
     });
-    request.on("error", () => resolve(false));
+    request.on("error", () => resolve("empty"));
     request.on("timeout", () => {
       request.destroy();
-      resolve(false);
+      resolve("empty");
     });
   });
 }
 
 async function ensureServer() {
-  if (await portAnswering()) return;
+  const existing = await probeServer();
+  if (existing === "studio") return;
+  if (existing === "occupied") {
+    throw new Error(`Port ${PORT} is already in use by another local service.`);
+  }
 
   const serverDir = resolveServerDir();
   if (!serverDir) {
@@ -81,7 +120,7 @@ async function ensureServer() {
 
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    if (await portAnswering()) return;
+    if ((await probeServer()) === "studio") return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error(`The app server did not answer on port ${PORT}.`);
@@ -102,13 +141,17 @@ function createWindow() {
 
   // The window is for the local app only; anything else opens in the browser.
   window.webContents.on("will-navigate", (event, url) => {
-    if (!url.startsWith(APP_ORIGIN)) {
+    if (!parsedAppUrl(url)) {
       event.preventDefault();
-      void shell.openExternal(url);
+      const externalUrl = parsedExternalUrl(url);
+      if (externalUrl) void shell.openExternal(externalUrl.href);
     }
   });
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(APP_ORIGIN)) void shell.openExternal(url);
+    const localUrl = parsedAppUrl(url);
+    const externalUrl = parsedExternalUrl(url);
+    if (localUrl?.pathname === "/api/google/auth/start") void shell.openExternal(localUrl.href);
+    else if (!localUrl && externalUrl) void shell.openExternal(externalUrl.href);
     return { action: "deny" };
   });
 
@@ -119,7 +162,7 @@ function createWindow() {
 app.whenReady().then(async () => {
   // The Talk tab needs the microphone; nothing else gets a permission.
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const fromApp = webContents.getURL().startsWith(APP_ORIGIN);
+    const fromApp = Boolean(parsedAppUrl(webContents.getURL()));
     callback(fromApp && (permission === "media" || permission === "audioCapture"));
   });
 

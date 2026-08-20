@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import {
   isValidLastContact,
-  isValidLog,
   isValidStatus,
-  readContacts,
-  writeContacts,
+  removeContact,
+  updateContact,
 } from "@/lib/contacts";
-import type { ContactLogEntry, ContactStatus } from "@/lib/contacts";
+import type { ContactStatus } from "@/lib/contacts";
 
 type UpdateContactBody = {
   name?: unknown;
@@ -17,7 +16,6 @@ type UpdateContactBody = {
   contact?: unknown;
   notes?: unknown;
   lastContact?: unknown;
-  log?: unknown;
 };
 
 type RouteContext = {
@@ -33,7 +31,6 @@ const allowedKeys = new Set([
   "contact",
   "notes",
   "lastContact",
-  "log",
 ]);
 
 export async function PATCH(request: Request, { params }: RouteContext) {
@@ -56,57 +53,41 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     (body.haveSamples !== undefined && typeof body.haveSamples !== "boolean") ||
     (body.contact !== undefined && typeof body.contact !== "string") ||
     (body.notes !== undefined && typeof body.notes !== "string") ||
-    (body.lastContact !== undefined && body.lastContact !== "" && !isValidLastContact(body.lastContact)) ||
-    (body.log !== undefined && !isValidLog(body.log))
+    (body.lastContact !== undefined && body.lastContact !== "" && !isValidLastContact(body.lastContact))
   ) {
     return NextResponse.json({ error: "Contact update is invalid" }, { status: 400 });
   }
 
   try {
-    const contacts = readContacts();
-    const entry = contacts.contacts.find((item) => item.id === id);
+    const entry = await updateContact(id, {
+      ...(body.name !== undefined ? { name: (body.name as string).trim() } : {}),
+      ...(body.role !== undefined ? { role: body.role as string } : {}),
+      ...(body.category !== undefined ? { category: body.category as string } : {}),
+      ...(body.status !== undefined ? { status: body.status as ContactStatus } : {}),
+      ...(body.haveSamples !== undefined ? { haveSamples: body.haveSamples as boolean } : {}),
+      ...(body.contact !== undefined ? { contact: body.contact as string } : {}),
+      ...(body.notes !== undefined ? { notes: body.notes as string } : {}),
+      ...(body.lastContact !== undefined
+        ? { lastContact: body.lastContact === "" ? null : (body.lastContact as string | null) }
+        : {}),
+    });
     if (!entry) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-
-    if (
-      body.category !== undefined &&
-      !contacts.categories.some((category) => category.id === body.category)
-    ) {
-      return NextResponse.json({ error: "Category does not exist" }, { status: 400 });
-    }
-
-    if (body.name !== undefined) entry.name = (body.name as string).trim();
-    if (body.role !== undefined) entry.role = body.role as string;
-    if (body.category !== undefined) entry.category = body.category as string;
-    if (body.status !== undefined) entry.status = body.status as ContactStatus;
-    if (body.haveSamples !== undefined) entry.haveSamples = body.haveSamples as boolean;
-    if (body.contact !== undefined) entry.contact = body.contact as string;
-    if (body.notes !== undefined) entry.notes = body.notes as string;
-    if (body.lastContact !== undefined) {
-      entry.lastContact = body.lastContact === "" ? null : (body.lastContact as string | null);
-    }
-    if (body.log !== undefined) entry.log = body.log as ContactLogEntry[];
-    entry.updatedAt = new Date().toISOString();
-
-    writeContacts(contacts);
     return NextResponse.json(entry);
-  } catch {
-    return NextResponse.json({ error: "Unable to update contact" }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to update contact";
+    return NextResponse.json({ error: message }, { status: message === "Category does not exist" ? 400 : 500 });
   }
 }
 
 export async function DELETE(_request: Request, { params }: RouteContext) {
   const { id } = await params;
   try {
-    const contacts = readContacts();
-    const entryIndex = contacts.contacts.findIndex((entry) => entry.id === id);
-    if (entryIndex === -1) {
+    const deletedEntry = await removeContact(id);
+    if (!deletedEntry) {
       return NextResponse.json({ error: "Contact not found" }, { status: 404 });
     }
-
-    const [deletedEntry] = contacts.contacts.splice(entryIndex, 1);
-    writeContacts(contacts);
     return NextResponse.json(deletedEntry);
   } catch {
-    return NextResponse.json({ error: "Unable to delete contact" }, { status: 500 });
+    return NextResponse.json({ error: "Unable to remove contact from outreach" }, { status: 500 });
   }
 }

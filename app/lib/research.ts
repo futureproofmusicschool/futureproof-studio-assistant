@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { readDocument, writeDocument } from "@/lib/documents";
 import { geminiFetch } from "@/lib/gemini";
 import { DEEP_RESEARCH_AGENT } from "@/lib/models";
 import { dataPath, ensureDataDirectory } from "@/lib/paths";
@@ -8,8 +9,8 @@ import { dataPath, ensureDataDirectory } from "@/lib/paths";
  * Deep Research through the Interactions API. A job runs in the background on
  * Google's side for up to ~20 minutes; we keep a small jobs file so the chat
  * brain (and the artist) can ask "is it done yet" across requests, and every
- * finished report lands as a cited markdown file in the external research/
- * folder, where the studio-file tools can read it back later.
+ * finished report lands as a native Google Doc in the managed Drive folder,
+ * where it shows up in the Docs tab like anything else worth reading.
  */
 
 const RESEARCH_DIR = dataPath("research");
@@ -21,6 +22,9 @@ export type ResearchJob = {
   query: string;
   startedAt: string;
   status: "in_progress" | "completed" | "failed";
+  documentId?: string;
+  webViewLink?: string;
+  /** Legacy jobs may still point at a local markdown report. */
   reportPath?: string;
 };
 
@@ -51,21 +55,6 @@ export function listResearchJobs(): ResearchJob[] {
 
 export function openResearchJobs(): ResearchJob[] {
   return readJobs().filter((job) => job.status === "in_progress");
-}
-
-function slugify(value: string) {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "research"
-  );
-}
-
-function dayStamp(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 export async function startDeepResearch(query: string): Promise<ResearchJob> {
@@ -108,13 +97,23 @@ function extractReport(interaction: Interaction) {
 }
 
 /**
- * Poll one job. On completion the report is written to research/ exactly once;
- * later checks return the saved file.
+ * Poll one job. On completion the report becomes a native Google Doc; later
+ * checks read that document back. Legacy local report paths remain readable.
  */
 export async function checkDeepResearch(id: string): Promise<ResearchJob & { report?: string }> {
   const jobs = readJobs();
   const job = jobs.find((entry) => entry.id === id);
   if (!job) throw new Error(`No research job with id ${id}. Known jobs: ${jobs.map((entry) => entry.id).join(", ") || "(none)"}.`);
+
+  if (job.status === "completed" && job.documentId) {
+    const document = await readDocument(job.documentId);
+    if (!document) throw new Error("The completed research document is no longer available in Google Drive.");
+    return {
+      ...job,
+      webViewLink: document.webViewLink,
+      report: document.body.slice(0, REPORT_PREVIEW_CHARS),
+    };
+  }
 
   if (job.status === "completed" && job.reportPath) {
     const absolute = dataPath(job.reportPath);
@@ -128,14 +127,19 @@ export async function checkDeepResearch(id: string): Promise<ResearchJob & { rep
 
   if (status === "completed") {
     const report = extractReport(interaction);
-    ensureDataDirectory("research");
-    const filename = `${dayStamp(new Date(job.startedAt))}-${slugify(job.query)}.md`;
-    const absolute = path.join(RESEARCH_DIR, filename);
-    const header = `# Deep research: ${job.query}\n\nStarted: ${job.startedAt}\nInteraction: ${job.id}\n\n`;
-    fs.writeFileSync(absolute, `${header}${report}\n`, "utf8");
+    // A finished report is exactly the kind of thing the artist should be able
+    // to edit, comment on, and share in Google Docs.
+    const saved = await writeDocument({
+      title: `Deep research: ${job.query}`,
+      source: "deep-research",
+      body: `_Researched ${job.startedAt.slice(0, 10)}._\n\n${report}`,
+      operationId: `deep-research:${job.id}`,
+    });
 
     job.status = "completed";
-    job.reportPath = `research/${filename}`;
+    job.documentId = saved.id;
+    job.webViewLink = saved.webViewLink;
+    delete job.reportPath;
     writeJobs(jobs);
     return { ...job, report: report.slice(0, REPORT_PREVIEW_CHARS) };
   }
@@ -169,7 +173,7 @@ export const DEEP_RESEARCH_DECLARATIONS = [
   {
     name: "check_deep_research",
     description:
-      "Check on a Deep Research job. Without an id it reports every job from this studio. When a job has finished, the report text comes back and the full report is saved in the research/ folder.",
+      "Check on a Deep Research job. Without an id it reports every job from this studio. When a job has finished, the report text comes back and the full report is saved as a document in the Docs tab.",
     parameters: {
       type: "OBJECT",
       properties: {

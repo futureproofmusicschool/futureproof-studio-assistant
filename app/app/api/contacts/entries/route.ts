@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import {
-  createContactId,
+  createContact,
+  isValidContactId,
   isValidLastContact,
   isValidLog,
   isValidStatus,
-  readContacts,
-  writeContacts,
 } from "@/lib/contacts";
 
 type CreateContactBody = {
+  id?: unknown;
   name?: unknown;
   role?: unknown;
   category?: unknown;
@@ -27,6 +27,9 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return NextResponse.json({ error: "Contact data must be a JSON object" }, { status: 400 });
+  }
 
   const name = typeof body.name === "string" ? body.name.trim() : "";
   const role = body.role === undefined ? "" : body.role;
@@ -39,6 +42,7 @@ export async function POST(request: Request) {
 
   if (
     !name ||
+    (body.id !== undefined && !isValidContactId(body.id)) ||
     typeof body.category !== "string" ||
     typeof role !== "string" ||
     !isValidStatus(status) ||
@@ -52,14 +56,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const contacts = readContacts();
-    if (!contacts.categories.some((category) => category.id === body.category)) {
-      return NextResponse.json({ error: "Category does not exist" }, { status: 400 });
-    }
-
-    const timestamp = new Date().toISOString();
-    const entry = {
-      id: createContactId(),
+    const entry = await createContact({
+      ...(typeof body.id === "string" ? { id: body.id } : {}),
       name,
       role,
       category: body.category,
@@ -69,13 +67,10 @@ export async function POST(request: Request) {
       notes,
       lastContact,
       log,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-    contacts.contacts.push(entry);
-    writeContacts(contacts);
+    });
     return NextResponse.json(entry, { status: 201 });
-  } catch {
-    return NextResponse.json({ error: "Unable to create contact" }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to create contact";
+    return NextResponse.json({ error: message }, { status: message === "Category does not exist" ? 400 : 500 });
   }
 }

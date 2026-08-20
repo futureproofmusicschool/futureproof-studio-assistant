@@ -1,8 +1,12 @@
 # Outbox
 
-Email drafts written by the studio assistant during a voice session in the Talk tab.
+This is the legacy local outbox from versions before Gmail integration.
 
-**Nothing here has been sent.** `draft_email` only ever writes a file. The artist reads the draft, edits it if needed, and sends it personally. When a draft goes out, log it against the contact in `contacts/contacts.json` and delete or archive the file.
+Current `draft_email` calls create a draft in the connected Gmail account and
+never send it. The artist reviews and sends from Gmail; outreach history is
+recorded in the managed Google Sheet.
 
-The drafts themselves live under `outbox/` in the external student-data
-directory shown in Settings. Ignored compatibility links may appear here.
+**Nothing already in this folder was sent or deleted by the migration.** Keep
+these files as a backup and handle any outstanding draft manually. Legacy
+drafts live under `outbox/` in the external student-data directory shown in
+Settings; ignored compatibility links may appear here.

@@ -9,7 +9,7 @@ export function generateMetadata(): Metadata {
   const config = readAssistantConfig();
   return {
     title: config.name,
-    description: `${config.name} local workspace`,
+    description: `${config.name} private studio workspace`,
   };
 }
 

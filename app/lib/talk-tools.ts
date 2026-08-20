@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ABLETON_FUNCTION_DECLARATIONS, isAbletonTool, runAbletonTool } from "@/lib/ableton/tools";
 import { saveMemoryNote } from "@/lib/bookkeeping";
+import { listDocuments, readDocument, writeDocument, type WriteMode } from "@/lib/documents";
+import { appendContactLog, readContacts } from "@/lib/contacts";
+import { createGmailDraft } from "@/lib/google/gmail";
 import { listReferenceDocs, readReferenceSection, searchReference } from "@/lib/reference";
-import { readContacts, writeContacts, type LogChannel } from "@/lib/contacts";
 import { DATA_ROOT, REPO_ROOT, dataPath, repoPath } from "@/lib/paths";
 
 // Everything the voice agent is allowed to read. Anything outside this list
@@ -23,7 +26,6 @@ const READABLE_DIRECTORIES = [
 
 const READABLE_FILES = [
   { area: "board", relative: path.join("board", "board.json"), storage: "data" },
-  { area: "contacts", relative: path.join("contacts", "contacts.json"), storage: "data" },
   { area: "rules", relative: "AGENTS.md", storage: "repo" },
 ];
 
@@ -31,9 +33,43 @@ const READABLE_EXTENSIONS = new Set([".md", ".json", ".txt"]);
 const MAX_FILE_BYTES = 50 * 1024;
 const MAX_HITS = 10;
 const CONTEXT_LINES = 2;
-const OUTBOX_DIR = dataPath("outbox");
 
 export type ToolResult = { result: unknown } | { error: string };
+export type ToolExecutionContext = { operationId?: string };
+
+function stableToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableToolValue);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableToolValue(nested)]),
+    );
+  }
+  return value;
+}
+
+function toolOperationId(
+  name: string,
+  args: Record<string, unknown>,
+  context?: ToolExecutionContext,
+) {
+  const provided = context?.operationId?.trim();
+  if (provided) return provided;
+  // Compatibility for direct/older callers. Gemini text and Live paths pass a
+  // provider call id; this deterministic payload fallback is safer than a
+  // random id because retrying a lost response cannot duplicate a side effect.
+  return `legacy-tool:${createHash("sha256")
+    .update(`${name}\0${JSON.stringify(stableToolValue(args))}`)
+    .digest("hex")}`;
+}
+
+function contactHistoryOperationId(operationId: string) {
+  return `h_${createHash("sha256")
+    .update(`${operationId}:contact-history`)
+    .digest("hex")
+    .slice(0, 32)}`;
+}
 
 function isInside(candidate: string, directory: string) {
   return candidate === directory || candidate.startsWith(`${directory}${path.sep}`);
@@ -72,7 +108,10 @@ function resolveReadablePath(requested: string) {
     if (cleaned !== entry.relative && !cleaned.startsWith(`${entry.relative}${path.sep}`)) continue;
     const directory = storedPath(entry);
     if (!fs.existsSync(directory)) continue;
-    const absolute = path.resolve(directory, path.relative(entry.relative, cleaned));
+    const within = path.relative(entry.relative, cleaned);
+    // Hidden directories hold indexes and bookkeeping, not user-facing content.
+    if (within.split(path.sep).some((segment) => segment.startsWith("."))) continue;
+    const absolute = path.resolve(directory, within);
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) continue;
     const real = fs.realpathSync(absolute);
     if (isInside(real, fs.realpathSync(directory)) && READABLE_EXTENSIONS.has(path.extname(real))) {
@@ -100,6 +139,7 @@ function collectReadableFiles(area?: string) {
 
     const walk = (directory: string) => {
       for (const child of fs.readdirSync(directory, { withFileTypes: true })) {
+        if (child.name.startsWith(".")) continue;
         const absolute = path.join(directory, child.name);
         if (child.isDirectory()) {
           walk(absolute);
@@ -193,7 +233,7 @@ export function readStudioFile(requested: unknown): ToolResult {
   if (!resolved) {
     return {
       error:
-        "That file is not readable. Readable areas: memory/, plans/, voice/transcripts/, interviews/templates/, .claude/rules/, board/board.json, contacts/contacts.json, AGENTS.md.",
+        "That file is not readable. Readable areas: memory/, plans/, conversation/transcripts/, voice/transcripts/, interviews/templates/, research/, .claude/rules/, board/board.json, and AGENTS.md. Use the dedicated Google Docs and Contacts tools for cloud data.",
     };
   }
 
@@ -211,22 +251,10 @@ export function readStudioFile(requested: unknown): ToolResult {
   };
 }
 
-function slugify(value: string) {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "draft"
-  );
-}
-
-function dayStamp(date: Date) {
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-export function draftEmail(args: Record<string, unknown>): ToolResult {
+export async function draftEmail(
+  args: Record<string, unknown>,
+  context?: ToolExecutionContext,
+): Promise<ToolResult> {
   const to = typeof args.to === "string" ? args.to.trim() : "";
   const subject = typeof args.subject === "string" ? args.subject.trim() : "";
   const body = typeof args.body === "string" ? args.body.trim() : "";
@@ -236,62 +264,65 @@ export function draftEmail(args: Record<string, unknown>): ToolResult {
     return { error: "draft_email needs to, subject, and body." };
   }
 
-  const now = new Date();
-  fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+  try {
+    const operationId = toolOperationId("draft_email", args, context);
+    const draft = await createGmailDraft({
+      to,
+      subject,
+      body,
+      operationId,
+    });
+    let loggedContact: string | null = null;
+    let logWarning: string | null = null;
 
-  const base = `${dayStamp(now)}-${slugify(subject)}`;
-  let filename = `${base}.md`;
-  let counter = 2;
-  while (fs.existsSync(path.join(OUTBOX_DIR, filename))) {
-    filename = `${base}-${counter}.md`;
-    counter += 1;
-  }
-
-  const frontmatter = [
-    "---",
-    `to: ${to}`,
-    `subject: ${subject}`,
-    `date: ${now.toISOString()}`,
-    ...(contactId ? [`contactId: ${contactId}`] : []),
-    "sent: false",
-    "---",
-    "",
-  ].join("\n");
-
-  const outputPath = path.join(OUTBOX_DIR, filename);
-  fs.writeFileSync(outputPath, `${frontmatter}${body}\n`, "utf8");
-
-  let loggedContact: string | null = null;
-  if (contactId) {
-    try {
-      const contacts = readContacts();
-      const contact = contacts.contacts.find((entry) => entry.id === contactId);
-      if (contact) {
-        contact.log.push({
-          date: now.toISOString(),
-          channel: "email" as LogChannel,
-          summary: `DRAFTED (not sent): ${subject}`,
-        });
-        contact.updatedAt = now.toISOString();
-        writeContacts(contacts);
-        loggedContact = contact.name;
+    if (contactId) {
+      try {
+        const contacts = await readContacts();
+        const contact = contacts.contacts.find((entry) => entry.id === contactId);
+        if (!contact) {
+          logWarning = `The Gmail draft exists, but no outreach contact has id "${contactId}", so it was not logged.`;
+        } else if (
+          await appendContactLog(
+            contactId,
+            {
+              date: draft.createdAt,
+              channel: "email",
+              summary: `DRAFTED in Gmail (not sent): ${subject}`,
+            },
+            contactHistoryOperationId(operationId),
+          )
+        ) {
+          loggedContact = contact.name;
+        } else {
+          logWarning = `The Gmail draft exists, but it could not be logged to ${contact.name}.`;
+        }
+      } catch (error) {
+        // Creating the draft is the important irreversible result. A Sheets
+        // problem is reported separately so a retry does not duplicate it.
+        logWarning = `The Gmail draft exists, but outreach logging failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`;
       }
-    } catch {
-      // A contacts-file problem must not lose the draft that is already on disk.
     }
-  }
 
-  return {
-    result: {
-      path: toVirtualRelative(outputPath),
-      sent: false,
-      note: "Draft written to outbox. Nothing was sent. The artist sends it after reading it.",
-      ...(loggedContact ? { loggedTo: loggedContact } : {}),
-    },
-  };
+    return {
+      result: {
+        ...draft,
+        note: "Draft created in Gmail. Nothing was sent; the artist reviews and sends it from Gmail.",
+        ...(loggedContact ? { loggedTo: loggedContact } : {}),
+        ...(logWarning ? { warning: logWarning } : {}),
+      },
+    };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Could not create the Gmail draft." };
+  }
 }
 
-export async function runStudioTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+export async function runStudioTool(
+  name: string,
+  args: Record<string, unknown>,
+  context?: ToolExecutionContext,
+): Promise<ToolResult> {
   if (isAbletonTool(name)) return runAbletonTool(name, args);
 
   switch (name) {
@@ -300,7 +331,149 @@ export async function runStudioTool(name: string, args: Record<string, unknown>)
     case "read_studio_file":
       return readStudioFile(args.path);
     case "draft_email":
-      return draftEmail(args);
+      return await draftEmail(args, context);
+    case "search_contacts":
+      try {
+        const query = typeof args.query === "string" ? args.query.trim() : "";
+        if (!query) return { error: "search_contacts needs a query." };
+        const terms = searchTerms(query);
+        const contacts = await readContacts();
+        const matches = contacts.contacts
+          .filter((contact) => {
+            const searchable = [
+              contact.name,
+              contact.role,
+              contact.contact,
+              contact.notes,
+              contact.status,
+              contacts.categories.find((category) => category.id === contact.category)?.name ?? "",
+              ...contact.log.map((entry) => `${entry.date} ${entry.channel} ${entry.summary}`),
+            ]
+              .join("\n")
+              .toLowerCase();
+            return searchable.includes(query.toLowerCase()) || terms.every((term) => searchable.includes(term));
+          })
+          .slice(0, MAX_HITS)
+          .map((contact) => ({
+            id: contact.id,
+            name: contact.name,
+            role: contact.role,
+            contact: contact.contact,
+            status: contact.status,
+            lastContact: contact.lastContact,
+          }));
+        return {
+          result: matches.length
+            ? { contacts: matches }
+            : { contacts: [], note: `No outreach contact matches "${query}".` },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not search the Google outreach list." };
+      }
+    case "read_contact":
+      try {
+        const contactId =
+          typeof args.contactId === "string"
+            ? args.contactId.trim()
+            : typeof args.id === "string"
+              ? args.id.trim()
+              : "";
+        if (!contactId) return { error: "read_contact needs a contactId." };
+        const contacts = await readContacts();
+        const contact = contacts.contacts.find((entry) => entry.id === contactId);
+        if (!contact) {
+          return { error: `No outreach contact has id "${contactId}". Call search_contacts to find it.` };
+        }
+        return {
+          result: {
+            ...contact,
+            categoryName:
+              contacts.categories.find((category) => category.id === contact.category)?.name ?? contact.category,
+          },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not read that Google contact." };
+      }
+    case "write_document":
+      try {
+        const documentId =
+          typeof args.documentId === "string"
+            ? args.documentId.trim()
+            : typeof args.slug === "string"
+              ? args.slug.trim()
+              : undefined;
+        const document = await writeDocument({
+          title: typeof args.title === "string" ? args.title : undefined,
+          documentId,
+          body: typeof args.body === "string" ? args.body : "",
+          mode: args.mode === "append" ? ("append" as WriteMode) : ("replace" as WriteMode),
+          expectedRevisionId:
+            typeof args.expectedRevisionId === "string" ? args.expectedRevisionId.trim() : undefined,
+          operationId: toolOperationId("write_document", args, context),
+        });
+        return {
+          result: {
+            documentId: document.id,
+            title: document.title,
+            webViewLink: document.webViewLink,
+            revisionId: document.revisionId,
+            updated: document.updatedAt,
+            note: `Saved as a Google Doc in the Docs tab: "${document.title}". Tell the artist the title so they can find it.`,
+          },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not save that document." };
+      }
+    case "list_documents":
+      try {
+        const documents = (await listDocuments()).map((document) => ({
+          documentId: document.id,
+          title: document.title,
+          updated: document.updatedAt.slice(0, 10),
+          excerpt: document.excerpt,
+          webViewLink: document.webViewLink,
+        }));
+        return {
+          result: documents.length
+            ? { documents }
+            : { documents: [], note: "No documents have been written yet." },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not list the documents." };
+      }
+    case "read_document":
+      try {
+        const documentId =
+          typeof args.documentId === "string"
+            ? args.documentId.trim()
+            : typeof args.slug === "string"
+              ? args.slug.trim()
+              : "";
+        const document = documentId ? await readDocument(documentId) : null;
+        if (!document) {
+          return {
+            error: `No managed Google Doc with id "${documentId}". Call list_documents to see what exists.`,
+          };
+        }
+        const requestedOffset = Number(args.offset ?? 0);
+        const offset = Number.isSafeInteger(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0;
+        const end = Math.min(document.body.length, offset + MAX_FILE_BYTES);
+        return {
+          result: {
+            documentId: document.id,
+            title: document.title,
+            updated: document.updatedAt,
+            webViewLink: document.webViewLink,
+            revisionId: document.revisionId,
+            offset,
+            contents: neutralizeDialogue(document.body.slice(offset, end)),
+            totalCharacters: document.body.length,
+            ...(end < document.body.length ? { truncated: true, nextOffset: end } : {}),
+          },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not read that document." };
+      }
     case "save_memory":
       try {
         return { result: saveMemoryNote(args as { type: string; title: string; body: string }) };
@@ -346,7 +519,7 @@ export const FUNCTION_DECLARATIONS = [
   {
     name: "search_studio_files",
     description:
-      "Search the studio files (memory, plans, past voice transcripts, session-mode templates, the board, contacts, project rules) for a word or phrase. Returns up to ten short snippets with their file paths. Use this before answering anything about past sessions, taste notes, procedures, or a contact's history.",
+      "Search the allowed local studio files (memory, plans, past transcripts, research jobs, session-mode templates, the board, and project rules) for a word or phrase. Returns up to ten short snippets with their file paths. Google Docs and Contacts have dedicated tools and are not part of this local search.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -362,7 +535,7 @@ export const FUNCTION_DECLARATIONS = [
   {
     name: "read_studio_file",
     description:
-      "Read the full contents of one studio file by its studio-relative path, for example memory/working-self.md or contacts/contacts.json. Use it after search_studio_files finds a promising hit.",
+      "Read the full contents of one allowed local studio file by its studio-relative path, for example memory/working-self.md. Use it after search_studio_files finds a promising hit; use read_document or read_contact for Google data.",
     parameters: {
       type: "OBJECT",
       properties: {
@@ -372,16 +545,92 @@ export const FUNCTION_DECLARATIONS = [
     },
   },
   {
+    name: "write_document",
+    description:
+      "Create or update a native Google Doc the artist can edit, share, and keep: a contact list, research findings, a release plan, options worked out together, or notes from this conversation. Managed Docs show up in the app's Docs tab. Use this whenever you produce more than a couple of actionable items or something the artist will want later; do not put that in save_memory, because memory is your own notebook. Say the title when you save one. To update an existing document, call read_document first and pass its documentId; mode append adds safely, while replace also requires that read's revisionId.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        title: {
+          type: "STRING",
+          description: "Short human title, e.g. 'Percussionists to contact'. It names the Google Doc and Docs entry.",
+        },
+        body: {
+          type: "STRING",
+          description:
+            "The document itself, in markdown. Headings, lists, and tables are fine and usually better than prose. Do not repeat the title as a heading at the top; the app shows it. With mode append, send only the new part.",
+        },
+        mode: {
+          type: "STRING",
+          description:
+            "replace (default) rewrites the whole document; append adds to the end of an existing one. Appending is the safe choice when adding to a list.",
+        },
+        documentId: {
+          type: "STRING",
+          description: "Optional: the exact Google document id of an existing managed document, from list_documents.",
+        },
+        expectedRevisionId: {
+          type: "STRING",
+          description:
+            "Required when replacing an existing document: pass the revisionId from the most recent read_document result. Omit for create or append.",
+        },
+      },
+      required: ["title", "body"],
+    },
+  },
+  {
+    name: "list_documents",
+    description:
+      "List the native Google Docs managed by Studio Assistant with titles, document ids, links, excerpts, and update dates. Call this before updating, when the artist refers to something written earlier, or when they ask what is on file.",
+    parameters: { type: "OBJECT", properties: {} },
+  },
+  {
+    name: "read_document",
+    description:
+      "Read one managed Google Doc by its documentId from list_documents. Long documents are paged; when truncated is true, call again with nextOffset until every page has been read before replacing the document.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        documentId: { type: "STRING", description: "Google document id from list_documents." },
+        offset: {
+          type: "NUMBER",
+          description: "Character offset for the next page. Omit for the first page; then use nextOffset verbatim.",
+        },
+      },
+      required: ["documentId"],
+    },
+  },
+  {
+    name: "search_contacts",
+    description:
+      "Search the connected Google outreach list, including names, roles, contact details, notes, status, categories, and correspondence summaries. In normal connector mode this list lives in the managed Sheet; Advanced direct mode can use Google Contacts for identity. Returns compact matches and stable contact ids; call read_contact for full history.",
+    parameters: {
+      type: "OBJECT",
+      properties: { query: { type: "STRING", description: "Name, address, role, status, or words from outreach notes/history." } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_contact",
+    description:
+      "Read one outreach contact in full by the stable contactId returned by search_contacts or included in the session's outreach digest. Includes identity fields, status, notes, and correspondence history from the connected Google store.",
+    parameters: {
+      type: "OBJECT",
+      properties: { contactId: { type: "STRING", description: "Stable outreach contact id." } },
+      required: ["contactId"],
+    },
+  },
+  {
     name: "draft_email",
     description:
-      "Write an email draft to a file in outbox/. This never sends anything: the artist reads the draft and sends it. Pass contactId when the recipient is in contacts.json so the draft is logged against them.",
+      "Create a real draft in the connected Gmail account. This NEVER sends email: the artist reviews and sends it from Gmail. Pass contactId when the recipient is in the outreach tracker so the draft is logged in the outreach Sheet.",
     parameters: {
       type: "OBJECT",
       properties: {
         to: { type: "STRING", description: "Recipient name or address." },
         subject: { type: "STRING", description: "Subject line." },
         body: { type: "STRING", description: "Full body of the email." },
-        contactId: { type: "STRING", description: "Optional contacts.json id, e.g. k_rcox4wrld." },
+        contactId: { type: "STRING", description: "Optional stable outreach contact id from search_contacts." },
       },
       required: ["to", "subject", "body"],
     },
@@ -415,7 +664,7 @@ export const FUNCTION_DECLARATIONS = [
   {
     name: "save_memory",
     description:
-      "Write one thing down so it survives this session. Use it the moment the artist says 'remember that', and on your own initiative for a strong creative reaction, a decision about a track's direction, a workflow that worked, or a problem solved after real effort. Say out loud that you saved it. Types: episodic (what happened today), semantic (something that stays true, like a taste or a tendency), procedural (how to do something, written as steps). The whole session is filed into memory automatically when it ends, so use this for the things that deserve their own file.",
+      "Write one thing down so it survives this session. Use it the moment the artist says 'remember that', and on your own initiative for a strong creative reaction, a decision about a track's direction, a workflow that worked, or a problem solved after real effort. Say out loud that you saved it. Types: episodic (what happened today), semantic (something that stays true, like a taste or a tendency), procedural (how to do something, written as steps). The rolling conversation is saved continuously and completed days are filed automatically, so use this for the things that deserve their own file immediately. This is your own notebook and the artist does not read it: anything they will want to open later, especially a list, belongs in write_document instead.",
     parameters: {
       type: "OBJECT",
       properties: {

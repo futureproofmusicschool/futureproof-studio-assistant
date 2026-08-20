@@ -190,10 +190,14 @@ migrateLinkedFile(".env", null, "GEMINI_API_KEY=\n");
 migrateLinkedFile("CLAUDE.local.md", "examples/CLAUDE.local.md");
 migrateLinkedFile(".git-personal-terms", null, "# One private term per line. Staged additions are checked case-insensitively.\n");
 migrateLinkedFile(path.join("board", "board.json"), "examples/board.json");
+// Kept as a recoverable legacy source for the explicit Google import in
+// Settings. Never remove or rewrite an existing local contacts file.
 migrateLinkedFile(path.join("contacts", "contacts.json"), "examples/contacts.json");
 migrateLinkedFile(path.join("voice", "prompt.md"), "examples/prompt.md");
 
 migrateLinkedDirectory("memory", "examples/memory");
+// Likewise, these markdown originals remain after Google Docs import.
+migrateLinkedDirectory("documents");
 migrateLinkedDirectory("plans");
 migrateLinkedDirectory(path.join("voice", "transcripts"));
 migrateLinkedDirectory(path.join(".claude", "skills"));

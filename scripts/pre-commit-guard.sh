@@ -3,6 +3,8 @@
 # The private-terms list itself is gitignored (add one term per line to
 # .git-personal-terms). A match is a real leak until proven otherwise: fix the
 # file, don't bypass with --no-verify.
+# This is intentionally only a seatbelt. A passing pattern scan never overrides
+# the zero-personal-information rule in AGENTS.md or makes unrecognized data safe.
 TERMS_FILE="$(git rev-parse --show-toplevel)/.git-personal-terms"
 
 # .gitignore only protects untracked files. Block the private storage paths at
@@ -13,6 +15,7 @@ while IFS= read -r path; do
   case "$path" in
     assistant.json|settings.json|ableton-hosts.json|\
     board/board.json|contacts/contacts.json|\
+    documents|documents/*|google|google/*|\
     memory|memory/*|plans|plans/*|\
     outbox/*|instruments/*|reference/*|\
     voice/prompt.md|voice/transcripts|voice/transcripts/*|\
@@ -37,10 +40,20 @@ if [ "$FAIL" = 1 ]; then
   exit 1
 fi
 
-[ -f "$TERMS_FILE" ] || exit 0
-
 STAGED=$(git diff --cached --unified=0 | grep '^+' | grep -v '^+++' || true)
 [ -z "$STAGED" ] && exit 0
+
+# These credentials should never appear in tracked text even when a private
+# path was copied under an innocent filename. Only inspect added lines and do
+# not print the matching value back to the terminal.
+if printf '%s\n' "$STAGED" | grep -E -q -- \
+  'AIza[0-9A-Za-z_-]{30,}|GOCSPX-[0-9A-Za-z_-]{16,}|ya29\.[0-9A-Za-z._-]{20,}|1//[0-9A-Za-z._-]{20,}|sk-ant-[0-9A-Za-z_-]{20,}|sk-(proj|svcacct)-[0-9A-Za-z_-]{20,}|gh[pousr]_[0-9A-Za-z]{20,}|github_pat_[0-9A-Za-z_]{20,}|xox[baprs]-[0-9A-Za-z-]{10,}|AKIA[0-9A-Z]{16}|sk_live_[0-9A-Za-z]{20,}|sb_secret_[0-9A-Za-z_-]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----'; then
+  echo "pre-commit guard: staged changes look like they contain an API or OAuth credential" >&2
+  echo "Commit blocked. Remove the credential and rotate it if it was real." >&2
+  exit 1
+fi
+
+[ -f "$TERMS_FILE" ] || exit 0
 
 while IFS= read -r term; do
   [ -z "$term" ] && continue

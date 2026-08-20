@@ -18,16 +18,17 @@ That is the foundation. MCP tools, skills, automation, and the local app sit on 
 ## Getting started
 
 1. **Copy this repo** or click **Use this template** on GitHub.
-2. **Install Node.js 18 or newer.**
+2. **Install Node.js 18.18 or newer.**
 3. **Run `scripts/init.sh`.** It creates or reconnects your external student-data directory and installs a pre-commit guard. On macOS the default is `~/Library/Application Support/Futureproof Studio Assistant/`. Existing repo-local data is migrated without overwriting anything.
-4. **Start the app** (`npm install --prefix app && npm run dev --prefix app`) and paste a Google Gemini API key into Settings. That is the only account you need: talking, writing MIDI, and filing sessions into memory all run on it.
-5. **Optional: a coding client for deeper work.** Claude Code (`claude`) or Codex (`codex`) opens the repo as a working session, which is better for auditing memory, editing prompts, and changing the assistant itself. Neither is required for the assistant to remember things.
-6. **Personalize the compatibility paths:**
+4. **Start the app** (`npm install --prefix app && npm run dev --prefix app`) and paste a Google Gemini API key into Settings. Talking, writing MIDI, and filing sessions into memory all run on that key.
+5. **Connect Google services** from Settings. Automatic mode reuses a detected Codex or Claude Code connector host and verifies Drive and Gmail separately. Drive is required for native Docs plus the managed Contacts and History Sheet; Gmail is optional for drafts. Normal setup does not require a Google Cloud project. See [Google services setup](docs/google-setup.md) and the exact [data-flow boundary](docs/data-flow.md).
+6. **Optional: use that client for deeper work too.** Claude Code (`claude`) or Codex (`codex`) can open the repo as a working session, which is better for auditing memory, editing prompts, and changing the assistant itself. A coding workspace is not required for the assistant to remember things. Connector-backed Google features do require the selected host to be installed and signed in.
+7. **Personalize the compatibility paths:**
    - `CLAUDE.local.md`: name the assistant and describe who you are
    - `assistant.json`: the same name, your name, and the accent color (the names are also editable in the app's Settings tab)
    - `voice/prompt.md`: describe the artist so the voice assistant is not generic
    - `.claude/rules/studio-context.md`: add your DAW, gear, genres, and workflow
-7. **Start working.** Talk to it in the app, or open the repo in a coding client and ask for help with a track. Tell the assistant what is worth remembering; every voice session is filed into memory automatically when it ends.
+8. **Start working.** Talk to it in the app, or open the repo in a coding client and ask for help with a track. Conversation turns are saved continuously; completed days are filed into memory by the app's hourly check, and **File to memory now** does it on demand.
 
 The app reads and writes the external directory directly. Ignored links in the checkout preserve the familiar paths above for Claude Code, Codex, and shell helpers. A normal pull, a fresh clone, or replacing the entire checkout cannot replace the underlying student data. Set `STUDIO_ASSISTANT_DATA_DIR` before startup to use a different location.
 
@@ -49,6 +50,8 @@ The MCP files use different formats, so keep their server definitions aligned wh
 
 Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`](https://docs.astral.sh/uv/) if `uvx` is not already on your path, and follow Ableton MCP's setup instructions before expecting the assistant to inspect Live.
 
+Google connector support is capability-detected on each installation. Automatic mode can select an available host, but it does not assume Codex and Claude Code expose identical Drive or Gmail tools. Settings shows each app separately and only enables what the selected host reports. Direct Google OAuth remains available as an Advanced option.
+
 ## Repo map
 
 | Path | What it is |
@@ -65,17 +68,18 @@ Both clients currently launch `AbletonMCP` with `uvx ableton-mcp`. Install [`uv`
 | `memory/episodic/` | Events: sessions, decisions, and experiments. |
 | `memory/semantic/` | Facts: taste, patterns, and validated insights. |
 | `memory/procedural/` | Repeatable workflows, gear recipes, and workarounds. |
-| `board/board.json` | Task board data shared by the app and assistant. |
-| `app/` | Next.js interface with Talk, Board, Contacts, and Settings tabs (port 3017). Also relays the voice socket. |
+| `board/board.json` | Local task board data shared by the app and assistant. |
+| Google Drive | Native Google Docs plus one managed Sheet, all inside a dedicated app folder. The Sheet's Contacts and History tabs are the outreach source of truth. |
+| `app/` | Next.js interface with Talk, Board, Contacts, Docs, and Settings tabs (port 3017). Also relays the voice socket. |
 | `ableton/AbletonOSC/` | Vendored Ableton Live Remote Script (OSC control surface); install with `scripts/install-abletonosc.sh`. |
 | `desktop/` | Electron shell that wraps the app in its own window. |
 | `examples/` | Starter copies used to initialize a new external student-data directory. |
-| `voice/` | Base voice prompt and saved session transcripts. |
+| `voice/` | Base voice prompt and the legacy voice-transcript path. Current daily transcripts live in `conversation/transcripts/`. |
 | `interviews/templates/` | Session modes for the Talk tab: onboarding, session debrief, brainstorm. |
-| `outbox/` | Email drafts written during a voice session. Nothing here is ever sent. |
+| `documents/`, `contacts/contacts.json`, `outbox/` | Legacy local data retained for the explicit one-time Google import; no longer the live stores. |
 | `instruments/` | Articulation and keyswitch docs for the composer. Yours stay local; only the README and example ship. |
 | `reference/` | The reference shelf: full manuals (PDF, docx, text, markdown) the assistant searches on demand. Gitignored except its README. |
-| `settings.json` | Machine-local settings: which Mac runs Ableton, and which model writes MIDI. |
+| `settings.json` | Machine-local settings: connector-host preference, which Mac runs Ableton, and which model writes MIDI. |
 
 ## The app
 
@@ -89,14 +93,17 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3017](http://localhost:3017). The app has four tabs:
+Open [http://127.0.0.1:3017](http://127.0.0.1:3017). The server only listens on this machine. The app has five tabs:
 
 - **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Add or replace your Gemini API key from Settings; first run also prompts for it on the Talk screen. The key is saved in the external student-data directory and stays on the server, which relays the socket at `/api/talk/ws`. Sessions hang up on their own after five quiet minutes.
 - **Board**: a kanban board backed by `board/board.json`. The UI and assistant edit the same source of truth.
-- **Contacts**: an outreach tracker backed by `contacts/contacts.json`, with a correspondence log per contact.
-- **Settings**: name the assistant (and yourself), pick which Mac runs Ableton Live, choose which model writes MIDI, and see what is on the reference shelf. Always present, even if you trim the other tabs in `assistant.json`.
+- **Contacts**: an outreach tracker backed by the Contacts and History tabs in the dedicated Google Sheet.
+- **Docs**: a list and preview of the native Google Docs in the dedicated Drive folder. Editing and sharing open in Google Docs.
+- **Settings**: choose a connector host, connect Drive and optional Gmail, run the one-time local-data import, name the assistant (and yourself), pick which Mac runs Ableton Live, choose which model writes MIDI, and see what is on the reference shelf. Always present, even if you trim the other tabs in `assistant.json`.
 
-During a Talk session the voice assistant can search the web, search and read your studio files (memory, plans, transcripts, templates, board, contacts, project rules, and nothing else), search any manuals you drop into `reference/` (PDF, docx, text, or markdown — see [`reference/README.md`](reference/README.md)), save a memory on the spot, and write an email draft to `outbox/`. Technical questions check the shelf first, then fall back to a web search preferring official documentation, and the assistant says where the answer came from. It never sends anything and never edits the board. Ending a session saves the transcript to `voice/transcripts/` and files it into memory automatically, on Gemini Flash through the same key; machine-written memory files are stamped `filed-by: gemini-flash` so you can audit what it kept.
+During a Talk session the assistant can search the web, use the managed Google Docs and Contacts/History Sheet, search and read the explicitly allowed local studio files (memory, plans, transcripts, templates, board, project rules, and nothing else), search any manuals you drop into `reference/` (PDF, docx, text, or markdown — see [`reference/README.md`](reference/README.md)), save a memory on the spot, and create a Gmail draft when Gmail is connected. Technical questions check the shelf first, then fall back to a web search preferring official documentation, and the assistant says where the answer came from. It never sends email and never edits the board. The conversation is saved continuously in `conversation/thread.jsonl`. Shortly after startup and every hour, the app files completed days from `conversation/transcripts/` into memory; **File to memory now** files the current conversation on demand. This runs on Gemini Flash through the same key, and machine-written memory files are stamped `filed-by: gemini-flash` so you can audit what it kept.
+
+Existing local contacts and markdown documents are not silently moved. After Google is connected, Settings offers a one-time, idempotent import and leaves every local original in place as a backup.
 
 ## Ableton Live control
 
@@ -119,7 +126,7 @@ Drop your sample library's articulation documentation into the student-data dire
 Add capabilities when the need is real:
 
 - **MCP tools** connect file systems, streaming APIs, and other services (Ableton Live control is built in).
-- **Gmail** integration (sending the drafts in `outbox/` from the app after you review them) is the next planned milestone; today you send drafts yourself.
+- **Google services** normally reuse capability-detected connectors from Codex or Claude Code. Direct Google OAuth is an Advanced fallback. Gmail access inside Studio Assistant stops at creating drafts; review and sending remain in Gmail.
 - **Skills** capture repeatable workflows.
 - **Automation** handles stable scheduled work such as session logs or library scans.
 - **More tabs** can be added through the app's tab registry.
@@ -128,6 +135,6 @@ A small assistant that knows you well beats a large one that does not.
 
 ## License and credits
 
-Written by John von Seggern. A [Futureproof Music School](https://futureproofmusicschool.com) project, MIT licensed (see [LICENSE](LICENSE)).
+A [Futureproof Music School](https://futureproofmusicschool.com) project, MIT licensed (see [LICENSE](LICENSE)).
 
 Made for the Futureproof community: copy it, rename it, make it yours. Your assistant deserves its own name anyway.
