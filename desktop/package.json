@@ -21,6 +21,7 @@
     },
     "files": [
       "main.mjs",
+      "server-probe.mjs",
       "package.json"
     ],
     "mac": {

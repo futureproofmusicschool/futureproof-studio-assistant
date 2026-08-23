@@ -6,11 +6,11 @@
 // is no preload surface at all.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
+import { probeServer as probeStudioServer } from "./server-probe.mjs";
 
 const PORT = Number(process.env.PORT || 3017);
 const APP_ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -56,34 +56,7 @@ function resolveServerDir() {
 }
 
 function probeServer() {
-  return new Promise((resolve) => {
-    const request = http.get({ host: "127.0.0.1", port: PORT, path: "/api/health", timeout: 1500 }, (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => {
-        if (body.length < 4096) body += chunk;
-      });
-      response.on("end", () => {
-        try {
-          const marker = JSON.parse(body);
-          resolve(
-            response.statusCode === 200 &&
-              marker?.app === "futureproof-studio-assistant" &&
-              marker?.protocol === 1
-              ? "studio"
-              : "occupied",
-          );
-        } catch {
-          resolve("occupied");
-        }
-      });
-    });
-    request.on("error", () => resolve("empty"));
-    request.on("timeout", () => {
-      request.destroy();
-      resolve("empty");
-    });
-  });
+  return probeStudioServer({ port: PORT });
 }
 
 async function ensureServer() {

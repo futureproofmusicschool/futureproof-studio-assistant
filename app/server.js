@@ -19,6 +19,7 @@ const { WebSocket, WebSocketServer } = require("ws");
 // Next bundles its own copy of this module for the route handlers, so it holds
 // no in-memory state: every write goes straight to disk.
 const conversation = require("./lib/conversation-store.js");
+const { claimServerBeforePreparing } = require("./lib/server-startup.js");
 
 const PORT = Number(process.env.PORT || 3017);
 const HOST = "127.0.0.1";
@@ -485,13 +486,23 @@ async function main() {
     stdio: "inherit",
   });
   cleanupDeadContactLocks();
-  const app = next({ dev, dir: __dirname });
-  await app.prepare();
-  const handle = app.getRequestHandler();
+
+  let app = null;
+  let handle = null;
 
   const server = http.createServer((request, response) => {
     if (!allowedLocalRequest(request)) {
       rejectHttp(response);
+      return;
+    }
+    if (!handle) {
+      response.writeHead(503, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Retry-After": "1",
+        Connection: "close",
+      });
+      response.end('{"app":"futureproof-studio-assistant","protocol":1,"status":"starting"}\n');
       return;
     }
     handle(request, response);
@@ -503,6 +514,12 @@ async function main() {
   server.on("upgrade", (request, socket, head) => {
     if (!allowedLocalRequest(request, { requireOrigin: true })) {
       rejectUpgrade(socket);
+      return;
+    }
+
+    if (!app || !handle) {
+      socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      socket.destroy();
       return;
     }
 
@@ -524,10 +541,18 @@ async function main() {
     socket.destroy();
   });
 
-  server.listen(PORT, HOST, () => {
-    console.log(`The app is listening at ${APP_ORIGIN}`);
-    scheduleFiling();
+  await claimServerBeforePreparing(server, {
+    port: PORT,
+    host: HOST,
+    prepare: async () => {
+      app = next({ dev, dir: __dirname });
+      await app.prepare();
+      handle = app.getRequestHandler();
+    },
   });
+
+  console.log(`The app is listening at ${APP_ORIGIN}`);
+  scheduleFiling();
 }
 
 main().catch((error) => {

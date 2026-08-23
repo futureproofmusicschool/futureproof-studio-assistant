@@ -16,7 +16,9 @@ assistant_is_running() {
 }
 
 port_is_answering() {
-  curl -s -o /dev/null --max-time 2 "$ORIGIN"
+  # A slow HTTP response still means the port is occupied. Test the TCP
+  # listener directly so waking a sleeping server never starts a rival one.
+  nc -z -w 1 127.0.0.1 "$PORT" 2>/dev/null
 }
 
 # Already running (the desktop app or another terminal)? Just open it.
