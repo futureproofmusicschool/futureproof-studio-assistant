@@ -139,9 +139,27 @@ async function readByFile(
   };
 }
 
-export async function listConnectorDocuments(): Promise<DocumentSummary[]> {
+export async function listConnectorDocuments(options: { includeExcerpts?: boolean } = {}): Promise<DocumentSummary[]> {
   const { host, workspace } = await ensureConnectorWorkspace();
   const files = await listManagedFiles(host, workspace.folderUrl);
+  if (options.includeExcerpts === false) {
+    return files
+      .map((file) => {
+        const stored = recordFor(host, file.id);
+        const createdAt = iso(file.createdTime, stored?.createdAt);
+        return {
+          id: file.id,
+          slug: file.id,
+          title: file.name,
+          source: source(stored?.source),
+          createdAt,
+          updatedAt: iso(file.modifiedTime, stored?.updatedAt ?? createdAt),
+          excerpt: "",
+          webViewLink: file.webViewLink ?? documentUrl(file.id),
+        } satisfies DocumentSummary;
+      })
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
   const documents: StudioDocument[] = [];
   let next = 0;
   const workers = Array.from({ length: Math.min(4, files.length) }, async () => {

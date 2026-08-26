@@ -6,7 +6,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const status = await getGoogleConnectorStatus();
+    // This endpoint backs the explicit Settings status check, so it should
+    // bypass the longer runtime cache used by Docs, Contacts, and tools.
+    const status = await getGoogleConnectorStatus({ forceRefresh: true });
     return NextResponse.json(status, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json(

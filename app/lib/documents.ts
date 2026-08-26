@@ -635,10 +635,16 @@ async function mapLimited<T, R>(values: T[], limit: number, mapper: (value: T) =
   return output;
 }
 
-export async function listDocuments(): Promise<DocumentSummary[]> {
-  if (usesAgentGoogleConnectors()) return listConnectorDocuments();
+export async function listDocuments(options: { includeExcerpts?: boolean } = {}): Promise<DocumentSummary[]> {
+  if (usesAgentGoogleConnectors()) return listConnectorDocuments(options);
   const folder = await ensureStudioFolder();
   const files = await listDocumentFiles(folder.folderId);
+  if (options.includeExcerpts === false) {
+    return files
+      .map((file) => file.id ? summaryFrom(file, "") : null)
+      .filter((document): document is DocumentSummary => Boolean(document))
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
   const documents = await mapLimited(files, 5, async (file) => {
     if (!file.id) return null;
     try {

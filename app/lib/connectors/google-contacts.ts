@@ -127,7 +127,7 @@ function operationRow(input: {
   return [input.operationId, input.kind, input.targetId, input.payloadHash, "complete", input.providerId, now, now];
 }
 
-async function readState(): Promise<{
+async function readState(options: { includeOperations?: boolean } = {}): Promise<{
   host: Awaited<ReturnType<typeof ensureConnectorWorkspace>>["host"];
   spreadsheetId: string;
   state: ConnectorContactState;
@@ -139,7 +139,9 @@ async function readState(): Promise<{
     connectorSpreadsheetValues(host, spreadsheetId, "Contacts", "A:L"),
     connectorSpreadsheetValues(host, spreadsheetId, "History", "A:F"),
     connectorSpreadsheetValues(host, spreadsheetId, "Categories", "A:C"),
-    connectorSpreadsheetValues(host, spreadsheetId, "Operations", "A:H"),
+    options.includeOperations === false
+      ? Promise.resolve([])
+      : connectorSpreadsheetValues(host, spreadsheetId, "Operations", "A:H"),
   ]);
 
   const contactIndexes = indexMap(contactRows[0] ?? [], CONNECTOR_CONTACT_HEADERS);
@@ -275,7 +277,10 @@ async function assertStableRow(
 }
 
 export async function readConnectorContacts(): Promise<Contacts> {
-  const { state } = await readState();
+  // Operations are mutation receipts. The read-only Contacts page does not
+  // use them, and connector calls are serialized, so avoid a fourth remote
+  // Sheet request on every refresh.
+  const { state } = await readState({ includeOperations: false });
   return {
     version: 1,
     categories: state.categories,

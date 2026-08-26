@@ -1,6 +1,6 @@
 "use client";
 
-import { KeyboardEvent, useCallback, useEffect, useState } from "react";
+import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { DocumentSource, DocumentSummary, StudioDocument } from "@/lib/documents";
@@ -15,6 +15,7 @@ type DocsViewProps = {
   initialDocuments: DocumentSummary[];
   initialError?: string;
   canTrash?: boolean;
+  loadOnMount?: boolean;
 };
 
 const SOURCE_LABELS: Record<DocumentSource, string> = {
@@ -22,6 +23,11 @@ const SOURCE_LABELS: Record<DocumentSource, string> = {
   you: "Yours",
   "deep-research": "Research",
 };
+
+// Keep the last successful index while the local app is open. Route changes
+// unmount this view, but they should not make the artist stare at an empty
+// Google round trip every time they come back.
+let cachedDocuments: DocumentSummary[] | null = null;
 
 async function responseError(response: Response) {
   try {
@@ -56,25 +62,43 @@ function bodyForDisplay(document: StudioDocument) {
   return document.body;
 }
 
-export function DocsView({ assistantName, initialDocuments, initialError, canTrash = true }: DocsViewProps) {
-  const [documents, setDocuments] = useState(initialDocuments);
+export function DocsView({
+  assistantName,
+  initialDocuments,
+  initialError,
+  canTrash = true,
+  loadOnMount = false,
+}: DocsViewProps) {
+  const [documents, setDocuments] = useState(() => cachedDocuments ?? initialDocuments);
   const [selected, setSelected] = useState<StudioDocument | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(loadOnMount && cachedDocuments === null);
   const [error, setError] = useState<string | null>(initialError ?? null);
+  const requestedInitialLoad = useRef(false);
 
   const refresh = useCallback(async () => {
+    setLoading(cachedDocuments === null);
     try {
       const response = await fetch("/api/documents", { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
       const body = (await response.json()) as { documents: DocumentSummary[] };
+      cachedDocuments = body.documents;
       setDocuments(body.documents);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to refresh documents");
+    } finally {
+      setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!loadOnMount || requestedInitialLoad.current) return;
+    requestedInitialLoad.current = true;
+    void refresh();
+  }, [loadOnMount, refresh]);
 
   const loadDocument = useCallback(async (id: string, showBusy = true) => {
     if (showBusy) setBusy(true);
@@ -155,14 +179,18 @@ export function DocsView({ assistantName, initialDocuments, initialError, canTra
         <div className="docs-sidebar-head">
           <div>
             <p className="eyebrow">Google Docs</p>
-            <h1>{documents.length || "No"} document{documents.length === 1 ? "" : "s"}</h1>
+            <h1>
+              {loading && !documents.length
+                ? "Loading documents"
+                : `${documents.length || "No"} document${documents.length === 1 ? "" : "s"}`}
+            </h1>
           </div>
         </div>
 
         {creating ? (
           <NewDocumentForm disabled={busy} onCancel={() => setCreating(false)} onCreate={create} />
         ) : (
-          <button className="add-card-button" onClick={() => setCreating(true)} type="button">
+          <button className="add-card-button" disabled={loading} onClick={() => setCreating(true)} type="button">
             <span aria-hidden="true">+</span>
             New Google Doc
           </button>
@@ -251,10 +279,12 @@ export function DocsView({ assistantName, initialDocuments, initialError, canTra
           </article>
         ) : (
           <div className="docs-empty">
-            <p className="eyebrow">Nothing open</p>
-            <h2>{documents.length ? "Pick a document" : "No Google Docs yet"}</h2>
+            <p className="eyebrow">{loading ? "Connecting to Google Drive" : "Nothing open"}</p>
+            <h2>{loading ? "Loading your documents…" : documents.length ? "Pick a document" : "No Google Docs yet"}</h2>
             <p>
-              {documents.length
+              {loading
+                ? "The page is ready. Your Google Docs will appear here as soon as Drive responds."
+                : documents.length
                 ? "Open a document here for a quick preview, then continue writing or sharing it in Google Docs."
                 : `Ask ${assistantName} to write something down, or create a Google Doc here. Documents stay in your Google Drive so you can share and edit them anywhere.`}
             </p>

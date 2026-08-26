@@ -8,6 +8,7 @@ type ContactsViewProps = {
   initialContacts: Contacts;
   initialError?: string | null;
   identityInSheet?: boolean;
+  loadOnMount?: boolean;
 };
 
 type RequestOptions = {
@@ -25,6 +26,11 @@ const STATUS_LABELS: Record<ContactStatus, string> = {
   confirmed: "Confirmed",
   declined: "Declined",
 };
+
+// Preserve the latest successful Sheet snapshot across client-side route
+// changes. A background refresh still runs, but returning to Contacts is
+// instant instead of blank while the serialized connector calls complete.
+let cachedContacts: Contacts | null = null;
 
 async function responseError(response: Response) {
   try {
@@ -56,20 +62,30 @@ function refreshFailureMessage(error: Error) {
   return `Contacts could not be refreshed, so the displayed data may be stale: ${error.message}`;
 }
 
-export function ContactsView({ initialContacts, initialError = null, identityInSheet = true }: ContactsViewProps) {
-  const [contacts, setContacts] = useState(initialContacts);
+export function ContactsView({
+  initialContacts,
+  initialError = null,
+  identityInSheet = true,
+  loadOnMount = false,
+}: ContactsViewProps) {
+  const [contacts, setContacts] = useState(() => cachedContacts ?? initialContacts);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(loadOnMount && cachedContacts === null);
+  const requestedInitialLoad = useRef(false);
 
   const editingContact = contacts.contacts.find((entry) => entry.id === editingId) ?? null;
 
   const refresh = useCallback(async () => {
+    setLoading(cachedContacts === null);
     try {
       const response = await fetch("/api/contacts", { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
-      setContacts((await response.json()) as Contacts);
+      const next = (await response.json()) as Contacts;
+      cachedContacts = next;
+      setContacts(next);
       setError(null);
       return null;
     } catch (loadError) {
@@ -77,14 +93,20 @@ export function ContactsView({ initialContacts, initialError = null, identityInS
         loadError instanceof Error ? loadError : new Error("Unable to refresh contacts");
       setError(refreshFailureMessage(failure));
       return failure;
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (loadOnMount && !requestedInitialLoad.current) {
+      requestedInitialLoad.current = true;
+      void refresh();
+    }
     const handleFocus = () => void refresh();
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, [refresh]);
+  }, [loadOnMount, refresh]);
 
   const mutate = useCallback(
     async (path: string, options: RequestOptions) => {
@@ -157,7 +179,7 @@ export function ContactsView({ initialContacts, initialError = null, identityInS
   }
 
   return (
-    <section className="board-page contacts-page" aria-busy={busy}>
+    <section className="board-page contacts-page" aria-busy={busy || loading}>
       <div className="board-heading">
         <div>
           <p className="eyebrow">Outreach</p>
@@ -201,7 +223,7 @@ export function ContactsView({ initialContacts, initialError = null, identityInS
 
             <div className="contacts-rows">
               {entries.length === 0 && addingTo !== category.id ? (
-                <p className="empty-list">No contacts yet</p>
+                <p className="empty-list">{loading ? "Loading contacts…" : "No contacts yet"}</p>
               ) : null}
               {entries.map((entry) => (
                 <div className="contact-row" data-status={entry.status} key={entry.id}>

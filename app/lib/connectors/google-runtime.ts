@@ -62,7 +62,10 @@ const GMAIL_TOOLS = ["gmail_get_profile", "gmail_create_draft"] as const;
 const SAFE_TOOLS = [...DRIVE_TOOLS, ...GMAIL_TOOLS] as const;
 const CODEX_SERVER = "codex_apps";
 const CODEX_INSTALL_URL = "https://chatgpt.com/apps";
-const STATUS_CACHE_MS = 10_000;
+// App/tool discovery starts a connector-host round trip and is far more
+// expensive than reading the local page shell. Runtime calls can reuse the
+// same verified inventory; the Settings status route explicitly refreshes it.
+const STATUS_CACHE_MS = 5 * 60_000;
 
 type CodexInspection = {
   available: boolean;

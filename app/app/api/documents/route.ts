@@ -6,7 +6,10 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    return NextResponse.json({ documents: await listDocuments() });
+    // The Docs tab needs a fast index. Full body reads happen only when the
+    // artist opens a document; fetching every body here makes route latency
+    // grow linearly with the library when connector calls are serialized.
+    return NextResponse.json({ documents: await listDocuments({ includeExcerpts: false }) });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to read documents" },
