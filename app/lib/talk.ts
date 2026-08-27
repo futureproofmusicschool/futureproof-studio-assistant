@@ -11,7 +11,7 @@ import { readSettings } from "@/lib/settings";
 import { FUNCTION_DECLARATIONS } from "@/lib/talk-tools";
 
 export const LIVE_MODEL = "models/gemini-3.1-flash-live-preview";
-export const LIVE_VOICE = "Algenib";
+export const LIVE_VOICE = "Charon";
 
 const TEMPLATES_DIR = repoPath("interviews", "templates");
 export const TRANSCRIPTS_DIR = dataPath("voice", "transcripts");
