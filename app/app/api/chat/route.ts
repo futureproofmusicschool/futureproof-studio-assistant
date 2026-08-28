@@ -11,6 +11,14 @@ import {
   selectModelTurns,
   type ConversationTurn,
 } from "@/lib/conversation-store";
+import {
+  CAPABILITY_DECLARATION,
+  CAPABILITY_TOOL_NAME,
+  chatProgressMessage,
+  parseCapabilityCategory,
+  planChatTools,
+  toolNamesForCategories,
+} from "@/lib/chat-tool-routing";
 import { requireGeminiKey, type GeminiContent, type GeminiPart } from "@/lib/gemini";
 import { CHAT_MODEL } from "@/lib/models";
 import { DEEP_RESEARCH_DECLARATIONS, isResearchTool, runResearchTool } from "@/lib/research";
@@ -93,7 +101,7 @@ function buildContents(turns: ConversationTurn[]): GeminiContent[] {
 }
 
 type StreamEvent =
-  | { type: "status"; status: "thinking" }
+  | { type: "status"; message: string }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: "running" | "done" | "error" }
   | { type: "done" }
@@ -193,6 +201,22 @@ async function runTool(name: string, args: Record<string, unknown>, operationId:
   return runStudioTool(name, args, { operationId });
 }
 
+function sideEffectAnswer(name: string, args: Record<string, unknown>) {
+  if (name === "write_document") {
+    const body = typeof args.body === "string" ? args.body.trim() : "";
+    const title = typeof args.title === "string" ? args.title.trim() : "the document";
+    return body ? `Here’s what I put together:\n\n${body}\n\nI’m saving it as **${title}** now.` : "";
+  }
+
+  if (name === "draft_email") {
+    const body = typeof args.body === "string" ? args.body.trim() : "";
+    const subject = typeof args.subject === "string" ? args.subject.trim() : "Draft email";
+    return body ? `Here’s the draft:\n\n**Subject: ${subject}**\n\n${body}\n\nI’m creating the Gmail draft now.` : "";
+  }
+
+  return "";
+}
+
 export async function POST(request: Request) {
   let body: { text?: unknown; answerOnly?: unknown };
   try {
@@ -232,25 +256,49 @@ export async function POST(request: Request) {
   );
   const contents: GeminiContent[] = buildContents(modelTurns);
   const priorUserTurn = [...history].reverse().find((turn) => turn.role === "user");
+  const requestText = userTurn?.text ?? priorUserTurn?.text ?? "";
+  const enabledCategories = planChatTools(requestText);
   const operationNamespace =
     userTurn?.id ?? priorUserTurn?.id ?? `unpersisted-${crypto.randomUUID()}`;
 
   const assistantSegments: string[] = [];
   const toolTurns: { role: "tool"; mode: "text"; text: string }[] = [];
+  const requestStartedAt = performance.now();
+  let promptMs = 0;
+  let firstTextMs: number | null = null;
+  let modelRounds = 0;
+  const usedTools: string[] = [];
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      const emit = (event: StreamEvent) => controller.enqueue(encoder.encode(sseChunk(event)));
+      const emit = (event: StreamEvent) => {
+        if (event.type === "text" && firstTextMs === null) {
+          firstTextMs = Math.round(performance.now() - requestStartedAt);
+        }
+        controller.enqueue(encoder.encode(sseChunk(event)));
+      };
 
       try {
         // Open the browser stream before any prompt construction or model work.
         // This makes the UI responsive immediately and prevents intermediary
         // proxies from buffering the eventual text response as one whole turn.
-        emit({ type: "status", status: "thinking" });
+        emit({ type: "status", message: chatProgressMessage(enabledCategories) });
+        const promptStartedAt = performance.now();
         const systemInstruction = await buildSystemInstruction("open", config.name, "text");
+        promptMs = Math.round(performance.now() - promptStartedAt);
 
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
+          modelRounds = round + 1;
+          const allowedNames = toolNamesForCategories(enabledCategories);
+          const declarations = [...FUNCTION_DECLARATIONS, ...DEEP_RESEARCH_DECLARATIONS].filter((declaration) =>
+            allowedNames.has(declaration.name),
+          );
+          const requestTools: Record<string, unknown>[] = [
+            { functionDeclarations: [...declarations, CAPABILITY_DECLARATION] },
+          ];
+          if (enabledCategories.has("web")) requestTools.push({ googleSearch: {} });
+
           const abort = new AbortController();
           const deadline = setTimeout(() => abort.abort(), MODEL_TIMEOUT_MS);
           let response: Response;
@@ -264,15 +312,12 @@ export async function POST(request: Request) {
               body: JSON.stringify({
                 systemInstruction: { parts: [{ text: systemInstruction }] },
                 contents,
-                tools: [
-                  {
-                    functionDeclarations: [...FUNCTION_DECLARATIONS, ...DEEP_RESEARCH_DECLARATIONS],
-                  },
-                  { googleSearch: {} },
-                ],
-                // Gemini requires this opt-in to mix built-in search with
-                // function calling on generateContent (the Live API does not).
-                toolConfig: { includeServerSideToolInvocations: true },
+                tools: requestTools,
+                // Gemini requires this opt-in when built-in search and
+                // function calling are both present.
+                ...(enabledCategories.has("web")
+                  ? { toolConfig: { includeServerSideToolInvocations: true } }
+                  : {}),
                 generationConfig: {
                   thinkingConfig: { thinkingLevel: "medium" },
                 },
@@ -312,10 +357,42 @@ export async function POST(request: Request) {
           contents.push({ role: "model", parts: modelParts });
 
           const responses: GeminiPart[] = [];
+          let roundHasVisibleText = modelParts.some((part) => !part.thought && Boolean(part.text));
           for (let callIndex = 0; callIndex < calls.length; callIndex += 1) {
             const call = calls[callIndex];
-            emit({ type: "tool", name: call.functionCall.name, status: "running" });
             const providerCallId = call.functionCall.id?.trim();
+
+            if (call.functionCall.name === CAPABILITY_TOOL_NAME) {
+              const category = parseCapabilityCategory(call.functionCall.args?.category);
+              const outcome = category
+                ? { result: { enabled: category } }
+                : { error: "Unknown capability category." };
+              if (category) {
+                enabledCategories.add(category);
+                emit({ type: "status", message: chatProgressMessage(new Set([category])) });
+              }
+              responses.push({
+                functionResponse: {
+                  ...(providerCallId ? { id: providerCallId } : {}),
+                  name: call.functionCall.name,
+                  response: outcome,
+                },
+              });
+              continue;
+            }
+
+            if (!roundHasVisibleText) {
+              const answerFirst = sideEffectAnswer(call.functionCall.name, call.functionCall.args ?? {});
+              if (answerFirst) {
+                modelParts.unshift({ text: answerFirst });
+                assistantSegments.push(answerFirst);
+                emit({ type: "text", delta: answerFirst });
+                roundHasVisibleText = true;
+              }
+            }
+
+            emit({ type: "tool", name: call.functionCall.name, status: "running" });
+            usedTools.push(call.functionCall.name);
             const operationId = `gemini-text:${operationNamespace}:${
               providerCallId || `${round}:${callIndex}`
             }`;
@@ -351,6 +428,9 @@ export async function POST(request: Request) {
         // answer the artist already read belongs in the thread.
         const answer = assistantSegments.join("").trim();
         appendTurns([...toolTurns, ...(answer ? [{ role: "assistant" as const, mode: "text" as const, text: answer }] : [])]);
+        console.info(
+          `[text-chat] total_ms=${Math.round(performance.now() - requestStartedAt)} prompt_ms=${promptMs} first_text_ms=${firstTextMs ?? "none"} rounds=${modelRounds} tools=${usedTools.join(",") || "none"}`,
+        );
         controller.close();
       }
     },

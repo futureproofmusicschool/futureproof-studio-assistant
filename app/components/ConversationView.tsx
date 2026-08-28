@@ -27,6 +27,7 @@ type ConversationViewProps = {
 type NewStreamItem =
   | { kind: "turn"; role: "user" | "model"; text: string; attachment?: AttachmentInfo }
   | { kind: "tool"; name: string; status: "running" | "done" | "error" }
+  | { kind: "progress"; text: string }
   | { kind: "notice"; text: string };
 
 type StreamItem = NewStreamItem & { id: number };
@@ -43,7 +44,7 @@ type ResearchJob = {
 };
 
 type StreamEvent =
-  | { type: "status"; status: "thinking" }
+  | { type: "status"; message: string }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: "running" | "done" | "error" }
   | { type: "done" }
@@ -291,7 +292,18 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
     if (!answerOnly) append({ kind: "turn", role: "user", text });
 
     let modelItemId: number | null = null;
+    let progressItemId: number | null = append({
+      kind: "progress",
+      text: "Got it — I’m working on that now.",
+    });
     const toolItemIds = new Map<string, number>();
+
+    const removeProgress = () => {
+      if (progressItemId === null) return;
+      const id = progressItemId;
+      progressItemId = null;
+      setItems((current) => current.filter((item) => item.id !== id));
+    };
 
     try {
       const response = await fetch("/api/chat", {
@@ -310,7 +322,17 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
       let pending = "";
 
       const handleEvent = (event: StreamEvent) => {
-        if (event.type === "text") {
+        if (event.type === "status") {
+          if (progressItemId !== null) {
+            const id = progressItemId;
+            setItems((current) =>
+              current.map((item) =>
+                item.id === id && item.kind === "progress" ? { ...item, text: event.message } : item,
+              ),
+            );
+          }
+        } else if (event.type === "text") {
+          removeProgress();
           if (modelItemId === null) {
             modelItemId = append({ kind: "turn", role: "model", text: event.delta });
           } else {
@@ -334,7 +356,10 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
             );
           }
           if (event.name === "start_deep_research" && event.status === "done") void refreshResearch();
+        } else if (event.type === "done") {
+          removeProgress();
         } else if (event.type === "error") {
+          removeProgress();
           setError(event.message);
         }
       };
@@ -359,8 +384,10 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
         }
       }
     } catch (caught) {
+      removeProgress();
       setError(caught instanceof Error ? caught.message : "The request failed.");
     } finally {
+      removeProgress();
       setBusy(false);
     }
   }, [append, busy, draft, inCall, pendingFile, refreshResearch, sendToCall, uploadPending, uploading]);
@@ -488,6 +515,16 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
               </p>
             );
           }
+          if (item.kind === "progress") {
+            return (
+              <article className="talk-turn" data-side="assistant" key={item.id} role="status">
+                <span className="talk-turn-speaker">{assistantName}</span>
+                <div className="talk-turn-text">
+                  <WorkingDots label={item.text} />
+                </div>
+              </article>
+            );
+          }
           if (item.kind === "notice") {
             return (
               <p className="chat-notice" key={item.id}>
@@ -537,9 +574,9 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
           ),
         )}
 
-        {busy || uploading ? (
+        {uploading ? (
           <p className="talk-stream-hint">
-            <WorkingDots label={uploading ? "Reading the file" : "Thinking"} />
+            <WorkingDots label="Reading the file" />
           </p>
         ) : null}
       </div>
