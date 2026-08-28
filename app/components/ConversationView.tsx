@@ -13,7 +13,7 @@ import type { TalkMode } from "@/lib/talk";
  * One conversation, typed or spoken.
  *
  * There is no session to start and no session to end: the thread lives on the
- * server and this window is a view onto it. Typing goes to Gemini Pro over SSE;
+ * server and this window is a view onto it. Typing goes to Gemini Flash over SSE;
  * pressing Call opens a Gemini Live socket whose turns land in the same thread,
  * so the two halves can see each other's context.
  */
@@ -43,6 +43,7 @@ type ResearchJob = {
 };
 
 type StreamEvent =
+  | { type: "status"; status: "thinking" }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: "running" | "done" | "error" }
   | { type: "done" }

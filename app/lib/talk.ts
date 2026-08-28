@@ -19,6 +19,7 @@ const VOICE_PROMPT_PATH = dataPath("voice", "prompt.md");
 const WORKING_SELF_PATH = dataPath("memory", "working-self.md");
 const TEMPLATE_HEADER = /^<!--\s*title:\s*(.*?)\s*\|\s*desc:\s*(.*?)\s*-->\s*\n?/;
 const TEMPLATE_ID = /^[a-z0-9-]+$/;
+const TEXT_FILE_CACHE = new Map<string, { mtimeMs: number; size: number; text: string }>();
 
 export const OPEN_MODE = { id: "open", name: "Open conversation", description: "Whatever is on your mind." };
 
@@ -29,7 +30,7 @@ export type TalkTurn = { speaker: string; text: string };
 export type Modality = "voice" | "text";
 
 const RETRIEVAL_POLICY = `HOW TO USE WHAT YOU HAVE
-You already hold the working-self snapshot, the board, and the outreach digest above; answer from them directly. For deeper local context (past sessions, taste notes, procedures, old transcripts) call search_studio_files first, then read_studio_file on the best hit. For a person or correspondence history, use search_contacts then read_contact. For a saved document, use list_documents then read_document. For facts about the outside world (dates, releases, people, venues) use search. Never guess at contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
+You already hold the working-self snapshot and board above; answer from them directly. Voice setup may also include an outreach snapshot. Text chat deliberately loads outreach and live Ableton state only when a request needs them. For deeper local context (past sessions, taste notes, procedures, old transcripts) call search_studio_files first, then read_studio_file on the best hit. For a person or correspondence history, use search_contacts then read_contact. For a saved document, use list_documents then read_document. For facts about the outside world (dates, releases, people, venues) use search. Never guess at contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
 
 For technical questions about software, instruments, or gear (how a parameter behaves, where a menu lives, what a keyswitch does), check the reference shelf first with search_reference, then read_reference on the best hit. If the shelf has nothing, use web search and prefer official documentation. Either way, say where the answer came from; never present a guess from general knowledge as documentation. If retrieved documentation contradicts what you thought you knew, the documentation wins.
 
@@ -129,10 +130,39 @@ async function contactsDigest() {
 
 function readOrEmpty(filePath: string) {
   try {
-    return fs.readFileSync(filePath, "utf8").trim();
+    const stat = fs.statSync(filePath);
+    const cached = TEXT_FILE_CACHE.get(filePath);
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.text;
+
+    const text = fs.readFileSync(filePath, "utf8").trim();
+    TEXT_FILE_CACHE.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, text });
+    return text;
   } catch {
+    TEXT_FILE_CACHE.delete(filePath);
     return "";
   }
+}
+
+function composerDigest() {
+  const backend = readSettings().composer.backend;
+  const brain =
+    backend === "gemini"
+      ? `Gemini Pro (${COMPOSER_GEMINI_MODEL})`
+      : backend === "anthropic-api"
+        ? `${COMPOSER_CLAUDE_MODEL} over the Anthropic API`
+        : `${COMPOSER_CLAUDE_MODEL} through the local Claude Code CLI`;
+
+  const instruments = listInstruments();
+  const styles = listStyles();
+  return [
+    `compose_midi_part is currently writing with ${brain}.`,
+    instruments.length
+      ? `Instrument docs available for the instrument argument: ${instruments.join(", ")}.`
+      : "No instrument docs are installed, so leave the instrument argument off.",
+    styles.length
+      ? `Style docs available for the style argument (how the instrument is really played): ${styles.join(", ")}.`
+      : "No style docs are installed, so leave the style argument off.",
+  ].join(" ");
 }
 
 async function abletonDigest() {
@@ -146,26 +176,7 @@ async function abletonDigest() {
       )
     : `Live is NOT currently reachable on ${where} (closed, or the AbletonOSC control surface is off). The Live tools will return errors until that changes; the artist can pick a different machine in the app's Ableton panel.`;
 
-  const backend = readSettings().composer.backend;
-  const brain =
-    backend === "gemini"
-      ? `Gemini Pro (${COMPOSER_GEMINI_MODEL})`
-      : backend === "anthropic-api"
-        ? `${COMPOSER_CLAUDE_MODEL} over the Anthropic API`
-        : `${COMPOSER_CLAUDE_MODEL} through the local Claude Code CLI`;
-
-  const instruments = listInstruments();
-  const styles = listStyles();
-  return [
-    live,
-    `compose_midi_part is currently writing with ${brain}.`,
-    instruments.length
-      ? `Instrument docs available for the instrument argument: ${instruments.join(", ")}.`
-      : "No instrument docs are installed, so leave the instrument argument off.",
-    styles.length
-      ? `Style docs available for the style argument (how the instrument is really played): ${styles.join(", ")}.`
-      : "No style docs are installed, so leave the style argument off.",
-  ].join(" ");
+  return `${live} ${composerDigest()}`;
 }
 
 export async function buildSystemInstruction(
@@ -176,16 +187,26 @@ export async function buildSystemInstruction(
   const base = readOrEmpty(VOICE_PROMPT_PATH);
   const workingSelf = readOrEmpty(WORKING_SELF_PATH);
   const purpose = modePurpose(modeId, assistantName);
+  const referenceDocs = listReferenceDocs();
+  const liveContext =
+    modality === "voice"
+      ? [
+          `## Outreach right now\n\n${await contactsDigest()}`,
+          `## Ableton right now\n\n${await abletonDigest()}`,
+        ]
+      : [
+          "## Outreach\n\nOutreach data is loaded on demand. Use search_contacts and read_contact when the artist asks about a person or correspondence; do not guess from stale context.",
+          `## Ableton\n\nLive reachability and session state are loaded on demand. Call get_live_overview when the artist asks about Ableton; do not guess whether Live is open. ${composerDigest()}`,
+        ];
 
   return [
     base,
     workingSelf ? `## Working self (current state)\n\n${workingSelf}` : "",
     `## Board right now\n\n${boardDigest()}`,
-    `## Outreach right now\n\n${await contactsDigest()}`,
-    `## Ableton right now\n\n${await abletonDigest()}`,
+    ...liveContext,
     `## Reference shelf\n\n${
-      listReferenceDocs().length
-        ? `Documents available to search_reference: ${listReferenceDocs().join(", ")}.`
+      referenceDocs.length
+        ? `Documents available to search_reference: ${referenceDocs.join(", ")}.`
         : "The reference shelf is empty. If the artist wants manuals searchable, they go in the student data directory's reference/ folder (PDF, docx, text, or markdown)."
     }`,
     purpose ? `## This session's purpose\n\n${purpose}` : "",

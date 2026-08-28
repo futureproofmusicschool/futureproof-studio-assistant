@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 import { readAssistantConfig } from "@/lib/config";
 import {
   DATA_ROOT,
-  MODEL_HISTORY_TURNS,
+  MODEL_HISTORY_CHAR_BUDGET,
   appendTurn,
   appendTurns,
   readTurns,
+  selectModelTurns,
   type ConversationTurn,
 } from "@/lib/conversation-store";
 import { requireGeminiKey, type GeminiContent, type GeminiPart } from "@/lib/gemini";
@@ -20,7 +21,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * The text half of the conversation: Gemini Pro (thinking) over plain HTTP,
+ * The text half of the conversation: Gemini Flash over plain HTTP,
  * streamed back as SSE. History comes from the shared conversation store, not
  * from the browser, so a typed turn sees everything said in a voice call. Tool
  * calls run right here in the server process (no hop through /api/talk/tools,
@@ -30,8 +31,8 @@ export const dynamic = "force-dynamic";
 const MAX_TOOL_ROUNDS = 8;
 
 /**
- * Gemini Pro preview occasionally accepts a request and then never starts the
- * stream. Without a ceiling the window just sits there, so give up and say so.
+ * A model request can fail to start streaming. Without a ceiling the window
+ * just sits there, so give up and say so.
  */
 const MODEL_TIMEOUT_MS = 90_000;
 
@@ -92,6 +93,7 @@ function buildContents(turns: ConversationTurn[]): GeminiContent[] {
 }
 
 type StreamEvent =
+  | { type: "status"; status: "thinking" }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: "running" | "done" | "error" }
   | { type: "done" }
@@ -218,14 +220,17 @@ export async function POST(request: Request) {
   }
 
   const config = readAssistantConfig();
-  const systemInstruction = await buildSystemInstruction("open", config.name, "text");
 
   // History lives on the server, so a text turn sees everything said in a voice
   // call and vice versa. The user turn is persisted before the model runs: a
   // crash mid-answer must not lose what the artist said.
-  const history = readTurns({ limit: MODEL_HISTORY_TURNS });
+  const history = readTurns();
   const userTurn = answerOnly ? null : appendTurn({ role: "user", mode: "text", text });
-  const contents: GeminiContent[] = buildContents([...history, ...(userTurn ? [userTurn] : [])]);
+  const modelTurns = selectModelTurns(
+    [...history, ...(userTurn ? [userTurn] : [])],
+    MODEL_HISTORY_CHAR_BUDGET,
+  );
+  const contents: GeminiContent[] = buildContents(modelTurns);
   const priorUserTurn = [...history].reverse().find((turn) => turn.role === "user");
   const operationNamespace =
     userTurn?.id ?? priorUserTurn?.id ?? `unpersisted-${crypto.randomUUID()}`;
@@ -239,6 +244,12 @@ export async function POST(request: Request) {
       const emit = (event: StreamEvent) => controller.enqueue(encoder.encode(sseChunk(event)));
 
       try {
+        // Open the browser stream before any prompt construction or model work.
+        // This makes the UI responsive immediately and prevents intermediary
+        // proxies from buffering the eventual text response as one whole turn.
+        emit({ type: "status", status: "thinking" });
+        const systemInstruction = await buildSystemInstruction("open", config.name, "text");
+
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {
           const abort = new AbortController();
           const deadline = setTimeout(() => abort.abort(), MODEL_TIMEOUT_MS);
@@ -262,6 +273,9 @@ export async function POST(request: Request) {
                 // Gemini requires this opt-in to mix built-in search with
                 // function calling on generateContent (the Live API does not).
                 toolConfig: { includeServerSideToolInvocations: true },
+                generationConfig: {
+                  thinkingConfig: { thinkingLevel: "medium" },
+                },
               }),
             },
             );
@@ -346,6 +360,7 @@ export async function POST(request: Request) {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
       Connection: "keep-alive",
     },
   });

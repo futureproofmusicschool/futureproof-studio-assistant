@@ -38,12 +38,16 @@ export declare const THREAD_PATH: string;
 export declare const STATE_PATH: string;
 export declare const UPLOADS_DIR: string;
 export declare const TRANSCRIPTS_DIR: string;
-export declare const MODEL_HISTORY_TURNS: number;
+export declare const MODEL_HISTORY_CHAR_BUDGET: number;
 export declare const SEED_CHAR_BUDGET: number;
 
 export declare function appendTurn(turn: Partial<ConversationTurn>): ConversationTurn | null;
 export declare function appendTurns(turns: Partial<ConversationTurn>[]): ConversationTurn[];
 export declare function readTurns(options?: { limit?: number }): ConversationTurn[];
+export declare function selectModelTurns(
+  turns: ConversationTurn[],
+  charBudget?: number,
+): ConversationTurn[];
 export declare function readState(): ConversationState;
 export declare function patchState(partial: ConversationState): ConversationState;
 export declare function mergeTranscriptText(previous: string, next: string): string;

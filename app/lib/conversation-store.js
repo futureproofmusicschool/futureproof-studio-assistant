@@ -39,9 +39,9 @@ const STATE_PATH = path.join(CONVERSATION_DIR, "state.json");
 const UPLOADS_DIR = path.join(CONVERSATION_DIR, "uploads");
 const TRANSCRIPTS_DIR = path.join(CONVERSATION_DIR, "transcripts");
 
-/** How many turns the UI and the text model see. The file keeps everything until a filing compacts it. */
+/** The UI keeps a generous tail; model context is selected separately by character budget. */
 const DEFAULT_READ_LIMIT = 200;
-const MODEL_HISTORY_TURNS = 60;
+const MODEL_HISTORY_CHAR_BUDGET = 12_000;
 const SEED_CHAR_BUDGET = 4000;
 
 function ensureDir(directory) {
@@ -113,6 +113,34 @@ function readTurns(options = {}) {
   }
 
   return limit > 0 ? turns.slice(-limit) : turns;
+}
+
+/**
+ * Keep the newest useful conversation context under a predictable payload
+ * budget. Character budgeting is deliberately simple and model-independent;
+ * it prevents a run of long turns or attachment extracts from making every
+ * text request progressively slower. The newest turn is always retained so a
+ * single large upload can still be answered.
+ */
+function selectModelTurns(turns, charBudget = MODEL_HISTORY_CHAR_BUDGET) {
+  const selected = [];
+  let used = 0;
+
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.role === "tool") continue;
+
+    const cost =
+      String(turn.text || "").length +
+      String(turn.attachment?.summary || "").length +
+      (turn.attachment ? String(turn.attachment.name || "").length + 32 : 0);
+
+    if (selected.length > 0 && used + cost > charBudget) break;
+    selected.unshift(turn);
+    used += cost;
+  }
+
+  return selected;
 }
 
 function readState() {
@@ -208,11 +236,12 @@ module.exports = {
   STATE_PATH,
   UPLOADS_DIR,
   TRANSCRIPTS_DIR,
-  MODEL_HISTORY_TURNS,
+  MODEL_HISTORY_CHAR_BUDGET,
   SEED_CHAR_BUDGET,
   appendTurn,
   appendTurns,
   readTurns,
+  selectModelTurns,
   readState,
   patchState,
   mergeTranscriptText,

@@ -10,8 +10,8 @@ export const BOOKKEEPING_MODEL = "gemini-3.6-flash";
 /** Gemini Pro: the default composer backend, so a student needs no second account. */
 export const COMPOSER_GEMINI_MODEL = "gemini-3.1-pro-preview";
 
-/** Gemini Pro (thinking) as the Chat tab's brain: text sessions for precise, complex instructions. */
-export const CHAT_MODEL = "gemini-3.1-pro-preview";
+/** Gemini Flash as the Chat tab's brain: medium thinking with much lower interactive latency. */
+export const CHAT_MODEL = "gemini-3.7-flash";
 
 /** The Deep Research agent the Chat tab can start through the Interactions API. */
 export const DEEP_RESEARCH_AGENT = "deep-research-preview-04-2026";
