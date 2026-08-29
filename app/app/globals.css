@@ -1,13 +1,45 @@
+@font-face {
+  font-display: swap;
+  font-family: "Satoshi";
+  font-style: normal;
+  font-weight: 400;
+  src: url("/fonts/satoshi-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: "Satoshi";
+  font-style: normal;
+  font-weight: 500;
+  src: url("/fonts/satoshi-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: "Satoshi";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/fonts/satoshi-700.woff2") format("woff2");
+}
+
+@font-face {
+  font-display: swap;
+  font-family: "Panchang";
+  font-style: normal;
+  font-weight: 700;
+  src: url("/fonts/panchang-700.woff2") format("woff2");
+}
+
 :root {
   --accent: #7c5cff;
-  --bg: #101012;
-  --surface: #17171a;
-  --surface-raised: #1d1d21;
-  --surface-hover: #232328;
-  --line: #2b2b30;
-  --line-strong: #3a3a41;
-  --text: #f0eff4;
-  --text-muted: #97959f;
+  --bg: #0f0e12;
+  --surface: #17161b;
+  --surface-raised: #1d1b22;
+  --surface-hover: #24212a;
+  --line: #2c2932;
+  --line-strong: #45404d;
+  --text: #f2eff6;
+  --text-muted: #9d97a5;
   --danger: #e27373;
   --header-height: 66px;
   color-scheme: dark;
@@ -27,7 +59,7 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Satoshi", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
 }

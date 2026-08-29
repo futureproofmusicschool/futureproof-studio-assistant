@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { readAssistantConfig } from "@/lib/config";
 import { enabledTabs } from "@/lib/tabs";
 import "./globals.css";
+import "./studio-command-center.css";
 
 export function generateMetadata(): Metadata {
   const config = readAssistantConfig();

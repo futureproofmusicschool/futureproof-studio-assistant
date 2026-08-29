@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AbletonChip } from "@/components/AbletonPanel";
+import { ProjectStatusRail } from "@/components/ProjectStatusRail";
 import { SetupPanel } from "@/components/SetupPanel";
 import { WorkingDots } from "@/components/Working";
 import { TOOL_SPEAKER, useGeminiLive } from "@/hooks/useGeminiLive";
@@ -22,6 +23,7 @@ type ConversationViewProps = {
   assistantName: string;
   userName: string;
   modes: TalkMode[];
+  publicPreview?: boolean;
 };
 
 type NewStreamItem =
@@ -57,6 +59,28 @@ type ThreadTurn = {
   attachment?: AttachmentInfo;
 };
 
+const PUBLIC_PREVIEW_ITEMS: StreamItem[] = [
+  {
+    id: -4,
+    kind: "turn",
+    role: "user",
+    text: "The second drop still feels crowded. Tighten the drums and leave more room for the bass.",
+  },
+  {
+    id: -3,
+    kind: "turn",
+    role: "model",
+    text: "I’d keep the first fill, cut the repeat before beat four, and let the bass own that silence. I can make the variation in Live, place it in Arrangement, and save the decision with the project.",
+  },
+  { id: -2, kind: "tool", name: "arrange_live_clip", status: "done" },
+  {
+    id: -1,
+    kind: "turn",
+    role: "model",
+    text: "Done. The new eight-bar variation is on the timeline and Live’s undo will revert the edit if you want the original back.",
+  },
+];
+
 const RESEARCH_POLL_MS = 60_000;
 
 const CALL_STATUS_LABEL: Record<string, string> = {
@@ -65,8 +89,8 @@ const CALL_STATUS_LABEL: Record<string, string> = {
   reconnecting: "Reconnecting",
 };
 
-export function ConversationView({ assistantName, userName, modes }: ConversationViewProps) {
-  const [items, setItems] = useState<StreamItem[]>([]);
+export function ConversationView({ assistantName, userName, modes, publicPreview = false }: ConversationViewProps) {
+  const [items, setItems] = useState<StreamItem[]>(() => (publicPreview ? PUBLIC_PREVIEW_ITEMS : []));
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +101,7 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
   const [filed, setFiled] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [lastFiledDay, setLastFiledDay] = useState<string | null>(null);
 
   const nextIdRef = useRef(1);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -110,16 +135,18 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
     try {
       const body = (await (await fetch("/api/conversation", { cache: "no-store" })).json()) as {
         turns?: ThreadTurn[];
+        lastFiledDay?: string | null;
       };
       setItems(toStreamItems(body.turns ?? []));
+      setLastFiledDay(body.lastFiledDay ?? null);
     } catch {
       // An unreadable thread is an empty conversation, not an error worth a banner.
     }
   }, [toStreamItems]);
 
   useEffect(() => {
-    void loadThread();
-  }, [loadThread]);
+    if (!publicPreview) void loadThread();
+  }, [loadThread, publicPreview]);
 
   // ------------------------------------------------------------------
   // The call
@@ -204,8 +231,8 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
   }, [append]);
 
   useEffect(() => {
-    void refreshResearch();
-  }, [refreshResearch]);
+    if (!publicPreview) void refreshResearch();
+  }, [publicPreview, refreshResearch]);
 
   const openJobs = research.filter((job) => job.status === "in_progress");
 
@@ -240,6 +267,7 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
   );
 
   const send = useCallback(async () => {
+    if (publicPreview) return;
     const text = draft.trim();
     const file = pendingFile;
     if ((!text && !file) || busy || uploading) return;
@@ -390,9 +418,10 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
       removeProgress();
       setBusy(false);
     }
-  }, [append, busy, draft, inCall, pendingFile, refreshResearch, sendToCall, uploadPending, uploading]);
+  }, [append, busy, draft, inCall, pendingFile, publicPreview, refreshResearch, sendToCall, uploadPending, uploading]);
 
   const fileNow = useCallback(async () => {
+    if (publicPreview) return;
     setFiling(true);
     setFiled(null);
     try {
@@ -413,92 +442,102 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
     } finally {
       setFiling(false);
     }
-  }, [loadThread]);
+  }, [loadThread, publicPreview]);
 
   const banner = error ?? callError;
 
   return (
-    <section className="talk-page chat-page">
+    <section className="talk-page chat-page" data-public-preview={publicPreview ? "true" : "false"}>
       <header className="talk-heading">
-        <div>
-          <p className="eyebrow">One conversation, typed or spoken</p>
-          <h1>{assistantName}</h1>
+        <div className="talk-heading-copy">
+          <p className="eyebrow">{publicPreview ? "Working product · public preview" : "One conversation · typed or spoken"}</p>
+          <h1>
+            The studio partner{" "}
+            <span>that never forgets.</span>
+          </h1>
         </div>
         <p>
-          Type, or press Call to talk out loud. Both land in the same thread, so {assistantName} carries the whole
-          conversation either way.
+          <strong>One creative thread.</strong> Type, speak, share a file, or work directly in Ableton. {assistantName}{" "}
+          carries the decisions forward.
         </p>
       </header>
 
-      {banner ? (
-        <div className="error-banner" role="alert">
-          <span>{banner}</span>
-          <button
-            onClick={() => {
-              setError(null);
-              clearCallError();
+      {publicPreview ? null : <SetupPanel />}
+
+      <div className="talk-workspace">
+        <div className="talk-conversation-column">
+          {banner && !publicPreview ? (
+            <div className="error-banner" role="alert">
+              <span>{banner}</span>
+              <button
+                onClick={() => {
+                  setError(null);
+                  clearCallError();
+                }}
+                type="button"
+              >
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+
+          {inCall ? (
+            <div className="talk-status-strip">
+              <span className="talk-connection" data-state={status}>
+                <span aria-hidden="true" />
+                {CALL_STATUS_LABEL[status] ?? "In a call"}
+              </span>
+              <span className="talk-mic" aria-label={`Microphone level ${Math.round(micLevel * 100)} percent`}>
+                <span className="talk-mic-fill" style={{ transform: `scaleX(${Math.max(0.02, micLevel)})` }} />
+              </span>
+              <span className="talk-mode-chip">{modes.find((mode) => mode.id === modeId)?.name}</span>
+              <AbletonChip />
+              <button
+                className="talk-mute-button"
+                data-muted={muted ? "true" : "false"}
+                onClick={() => setMuted(!muted)}
+                type="button"
+              >
+                {muted ? "Speaker off" : "Speaker on"}
+              </button>
+              <button className="talk-end-button" onClick={() => void endCall()} type="button">
+                End call
+              </button>
+            </div>
+          ) : null}
+
+          {inCall && idleSecondsLeft !== null ? (
+            <div className="talk-idle-warning" role="status">
+              <span>Quiet for a while. Hanging up in {idleSecondsLeft}s.</span>
+              <button onClick={stayAlive} type="button">
+                Keep it open
+              </button>
+            </div>
+          ) : null}
+
+          {openJobs.length > 0 ? (
+            <div className="chat-research-strip" role="status">
+              <WorkingDots
+                label={`Deep research running: ${openJobs.map((job) => `"${job.query}"`).join(", ")} (up to 20 minutes)`}
+              />
+            </div>
+          ) : null}
+
+          {filed ? <p className="chat-filed-note">{filed}</p> : null}
+
+          <div className="talk-stream-label" aria-hidden="true">
+            <span>{publicPreview ? "Sample studio log" : "Live studio log"}</span>
+            <span>{items.length + callTurns.length} entries</span>
+          </div>
+
+          <div
+            className="talk-stream chat-stream"
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              pinnedRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
             }}
-            type="button"
+            ref={streamRef}
           >
-            Dismiss
-          </button>
-        </div>
-      ) : null}
-
-      <SetupPanel />
-
-      {inCall ? (
-        <div className="talk-status-strip">
-          <span className="talk-connection" data-state={status}>
-            <span aria-hidden="true" />
-            {CALL_STATUS_LABEL[status] ?? "In a call"}
-          </span>
-          <span className="talk-mic" aria-label={`Microphone level ${Math.round(micLevel * 100)} percent`}>
-            <span className="talk-mic-fill" style={{ transform: `scaleX(${Math.max(0.02, micLevel)})` }} />
-          </span>
-          <span className="talk-mode-chip">{modes.find((mode) => mode.id === modeId)?.name}</span>
-          <AbletonChip />
-          <button
-            className="talk-mute-button"
-            data-muted={muted ? "true" : "false"}
-            onClick={() => setMuted(!muted)}
-            type="button"
-          >
-            {muted ? "Speaker off" : "Speaker on"}
-          </button>
-          <button className="talk-end-button" onClick={() => void endCall()} type="button">
-            End call
-          </button>
-        </div>
-      ) : null}
-
-      {inCall && idleSecondsLeft !== null ? (
-        <div className="talk-idle-warning" role="status">
-          <span>Quiet for a while. Hanging up in {idleSecondsLeft}s.</span>
-          <button onClick={stayAlive} type="button">
-            Keep it open
-          </button>
-        </div>
-      ) : null}
-
-      {openJobs.length > 0 ? (
-        <div className="chat-research-strip" role="status">
-          <WorkingDots
-            label={`Deep research running: ${openJobs.map((job) => `"${job.query}"`).join(", ")} (up to 20 minutes)`}
-          />
-        </div>
-      ) : null}
-
-      {filed ? <p className="chat-filed-note">{filed}</p> : null}
-
-      <div
-        className="talk-stream chat-stream"
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          pinnedRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-        }}
-        ref={streamRef}
-      >
         {items.length === 0 && callTurns.length === 0 ? (
           <p className="talk-stream-hint">
             Ask for something specific, or press Call and think out loud. {assistantName} reads your studio files,
@@ -579,6 +618,15 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
             <WorkingDots label="Reading the file" />
           </p>
         ) : null}
+          </div>
+        </div>
+
+        <ProjectStatusRail
+          inCall={inCall}
+          lastFiledDay={lastFiledDay}
+          micLevel={micLevel}
+          publicPreview={publicPreview}
+        />
       </div>
 
       <div className="talk-composer-shell">
@@ -608,6 +656,7 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
           />
           <button
             className="chat-attach-button"
+            disabled={publicPreview}
             onClick={() => fileInputRef.current?.click()}
             title="Attach an image, PDF, text file, or MIDI file"
             type="button"
@@ -618,23 +667,32 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
           <textarea
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => {
+              if (publicPreview) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 void send();
               }
             }}
             placeholder={
-              inCall
+              publicPreview
+                ? "Public preview uses generic studio content."
+                : inCall
                 ? `Type to ${assistantName} instead of speaking`
                 : `Tell ${assistantName} what to do. Shift+Enter for a new line.`
             }
+            readOnly={publicPreview}
             rows={Math.min(6, Math.max(1, draft.split("\n").length))}
             value={draft}
           />
 
           {inCall ? null : (
             <div className="chat-call-wrap">
-              <button className="chat-call-button" onClick={() => setModePickerOpen((open) => !open)} type="button">
+              <button
+                className="chat-call-button"
+                disabled={publicPreview}
+                onClick={() => setModePickerOpen((open) => !open)}
+                type="button"
+              >
                 Call
               </button>
               {modePickerOpen ? (
@@ -650,16 +708,29 @@ export function ConversationView({ assistantName, userName, modes }: Conversatio
             </div>
           )}
 
-          <button disabled={(!draft.trim() && !pendingFile) || busy || uploading} onClick={() => void send()} type="button">
+          <button
+            disabled={publicPreview || (!draft.trim() && !pendingFile) || busy || uploading}
+            onClick={() => void send()}
+            type="button"
+          >
             Send
           </button>
         </div>
 
         <p className="chat-session-row">
-          <button className="chat-end-button" disabled={filing} onClick={() => void fileNow()} type="button">
-            {filing ? "Filing..." : "File to memory now"}
-          </button>
-          <span>The conversation files itself into memory daily; this does it on the spot.</span>
+          {publicPreview ? (
+            <>
+              <span className="public-preview-lock">Preview safe</span>
+              <span>No private conversation, contacts, or studio information is loaded here.</span>
+            </>
+          ) : (
+            <>
+              <button className="chat-end-button" disabled={filing} onClick={() => void fileNow()} type="button">
+                {filing ? "Filing..." : "File to memory now"}
+              </button>
+              <span>The conversation files itself into memory daily; this does it on the spot.</span>
+            </>
+          )}
         </p>
       </div>
     </section>

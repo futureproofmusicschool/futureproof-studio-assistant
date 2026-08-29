@@ -14,17 +14,27 @@ type AppShellProps = {
 
 export function AppShell({ name, tabs, children }: AppShellProps) {
   const pathname = usePathname();
+  const publicPreview = pathname === "/showcase";
+  const visibleTabs = publicPreview ? tabs.filter((tab) => tab.id !== "contacts") : tabs;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-public-preview={publicPreview ? "true" : "false"}>
       <header className="app-header">
-        <Link className="assistant-name" href={tabs[0]?.href ?? "/"}>
+        <Link
+          aria-label={`${name} studio assistant`}
+          className="assistant-name"
+          href={publicPreview ? "/showcase" : (tabs[0]?.href ?? "/")}
+        >
           <span className="assistant-mark" aria-hidden="true" />
-          {name}
+          <span className="assistant-lockup-copy">
+            <strong>{name}</strong>
+            <small>Studio assistant</small>
+          </span>
         </Link>
         <nav className="tab-nav" aria-label="Primary navigation">
-          {tabs.map((tab) => {
-            const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+          {visibleTabs.map((tab) => {
+            const active =
+              pathname === tab.href || pathname.startsWith(`${tab.href}/`) || (publicPreview && tab.id === "talk");
             return (
               <Link
                 className="tab-link"
@@ -41,10 +51,11 @@ export function AppShell({ name, tabs, children }: AppShellProps) {
           <WorkingIndicator />
           <div
             className="local-status"
+            data-preview={publicPreview ? "true" : "false"}
             title="The server runs only on this machine; connected Google services are managed in Settings"
           >
             <span aria-hidden="true" />
-            Local app
+            {publicPreview ? "Public preview" : "Private · local-first"}
           </div>
         </div>
       </header>
