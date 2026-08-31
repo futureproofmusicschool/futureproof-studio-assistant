@@ -202,6 +202,11 @@ async function runTool(name: string, args: Record<string, unknown>, operationId:
 }
 
 function sideEffectAnswer(name: string, args: Record<string, unknown>) {
+  if (name === "write_studio_file") {
+    const requestedPath = typeof args.path === "string" ? args.path.trim() : "the local artifact";
+    return `I’ve built it. I’m saving **${requestedPath}** in your private local artifacts folder now.`;
+  }
+
   if (name === "write_document") {
     const body = typeof args.body === "string" ? args.body.trim() : "";
     const title = typeof args.title === "string" ? args.title.trim() : "the document";

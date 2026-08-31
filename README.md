@@ -95,7 +95,7 @@ npm run dev
 
 Open [http://127.0.0.1:3017](http://127.0.0.1:3017). The server only listens on this machine. The app has five tabs:
 
-- **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Add or replace your Gemini API key from Settings; first run also prompts for it on the Talk screen. The key is saved in the external student-data directory and stays on the server, which relays the socket at `/api/talk/ws`. Sessions hang up on their own after five quiet minutes.
+- **Talk**: one voice-first conversation surface, backed by Gemini Live. Pick a session mode, hit Start talking, and speak; the assistant answers out loud and both sides stream as text. Typing works mid-session. Attach a `.mid` or `.midi` file (up to 1 MB) to ask about its key, chords, progression, tempo, meter, range, or structure; the derived musical analysis stays with the conversation. Add or replace your Gemini API key from Settings; first run also prompts for it on the Talk screen. The key is saved in the external student-data directory and stays on the server, which relays the socket at `/api/talk/ws`. Sessions hang up on their own after five quiet minutes.
 - **Board**: a kanban board backed by `board/board.json`. The UI and assistant edit the same source of truth.
 - **Contacts**: an outreach tracker backed by the Contacts and History tabs in the dedicated Google Sheet.
 - **Docs**: a list and preview of the native Google Docs in the dedicated Drive folder. Editing and sharing open in Google Docs.

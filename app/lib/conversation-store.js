@@ -41,8 +41,19 @@ const TRANSCRIPTS_DIR = path.join(CONVERSATION_DIR, "transcripts");
 
 /** The UI keeps a generous tail; model context is selected separately by character budget. */
 const DEFAULT_READ_LIMIT = 200;
-const MODEL_HISTORY_CHAR_BUDGET = 12_000;
-const SEED_CHAR_BUDGET = 4000;
+const MODEL_HISTORY_CHAR_BUDGET = 64_000;
+const SEED_CHAR_BUDGET = 32_000;
+const HISTORY_OMISSION_MARKER = "\n\n[… middle omitted from model history …]\n\n";
+
+function clipHistoryText(text, charBudget) {
+  if (text.length <= charBudget) return text;
+  if (charBudget <= HISTORY_OMISSION_MARKER.length + 2) return "";
+
+  const available = charBudget - HISTORY_OMISSION_MARKER.length;
+  const beginning = Math.ceil(available / 2);
+  const ending = Math.floor(available / 2);
+  return `${text.slice(0, beginning)}${HISTORY_OMISSION_MARKER}${text.slice(-ending)}`;
+}
 
 function ensureDir(directory) {
   fs.mkdirSync(directory, { recursive: true });
@@ -135,7 +146,11 @@ function selectModelTurns(turns, charBudget = MODEL_HISTORY_CHAR_BUDGET) {
       String(turn.attachment?.summary || "").length +
       (turn.attachment ? String(turn.attachment.name || "").length + 32 : 0);
 
-    if (selected.length > 0 && used + cost > charBudget) break;
+    if (selected.length > 0 && used + cost > charBudget) {
+      const clipped = clipHistoryText(String(turn.text || ""), Math.max(0, charBudget - used));
+      if (clipped) selected.unshift({ ...turn, text: clipped, attachment: undefined });
+      break;
+    }
     selected.unshift(turn);
     used += cost;
   }
@@ -200,7 +215,13 @@ function selectSeedTurns(turns, charBudget = SEED_CHAR_BUDGET) {
 
     const text = String(turn.text || "").replace(/\s+/g, " ").trim();
     if (!text) continue;
-    if (used + text.length > charBudget) break;
+    if (used + text.length > charBudget) {
+      const clipped = clipHistoryText(text, Math.max(0, charBudget - used));
+      if (clipped) {
+        selected.unshift({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text: clipped }] });
+      }
+      break;
+    }
 
     used += text.length;
     selected.unshift({ role: turn.role === "assistant" ? "model" : "user", parts: [{ text }] });

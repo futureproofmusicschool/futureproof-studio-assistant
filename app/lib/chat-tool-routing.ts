@@ -6,6 +6,7 @@
 
 export type ChatToolCategory =
   | "studio_files"
+  | "artifacts"
   | "documents"
   | "contacts"
   | "reference"
@@ -25,7 +26,7 @@ export const CAPABILITY_DECLARATION = {
       category: {
         type: "STRING",
         description:
-          "One of: studio_files, documents, contacts, reference, ableton, web, deep_research.",
+          "One of: studio_files, artifacts, documents, contacts, reference, ableton, web, deep_research.",
       },
     },
     required: ["category"],
@@ -34,6 +35,7 @@ export const CAPABILITY_DECLARATION = {
 
 const TOOL_NAMES: Record<Exclude<ChatToolCategory, "web">, readonly string[]> = {
   studio_files: ["search_studio_files", "read_studio_file", "save_memory"],
+  artifacts: ["write_studio_file", "read_studio_file"],
   documents: ["write_document", "list_documents", "read_document"],
   contacts: ["search_contacts", "read_contact", "draft_email"],
   reference: ["search_reference", "read_reference"],
@@ -63,6 +65,15 @@ function includes(text: string, pattern: RegExp) {
 
 export function planChatTools(text: string) {
   const categories = new Set<ChatToolCategory>();
+
+  if (
+    includes(
+      text,
+      /\b(local (?:html )?(?:file|page|web ?page)|html (?:file|page)|web ?page|downloadable (?:file|page)|save (?:this|that|it) (?:locally|as (?:an? )?local file|with (?:my|the) (?:other )?user data)|make (?:this|that|it) into (?:an? )?(?:local )?(?:html )?(?:file|page|web ?page))\b/,
+    )
+  ) {
+    categories.add("artifacts");
+  }
 
   if (
     includes(
@@ -143,6 +154,7 @@ export function parseCapabilityCategory(value: unknown): ChatToolCategory | null
 }
 
 export function chatProgressMessage(categories: ReadonlySet<ChatToolCategory>) {
+  if (categories.has("artifacts")) return "Got it — I’ll create that in your private local artifacts folder.";
   if (categories.has("documents")) return "Got it — I’ll answer here first, then handle the document.";
   if (categories.has("contacts")) return "Got it — I’m checking the relevant outreach details now.";
   if (categories.has("ableton")) return "Got it — I’m checking the live Ableton context now.";

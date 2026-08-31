@@ -35,6 +35,22 @@ test("document and outreach intents expose only their relevant families", () => 
   assert.equal(names.has("get_live_overview"), false);
 });
 
+test("local page and artifact requests expose the private file writer", () => {
+  for (const request of [
+    "Can we make this into a local HTML page that I can work with?",
+    "Please save it with my other user data.",
+    "Save that page as a local file.",
+  ]) {
+    const categories = planChatTools(request);
+    assert.ok(categories.has("artifacts"), request);
+    assert.ok(toolNamesForCategories(categories).has("write_studio_file"), request);
+  }
+  assert.equal(
+    chatProgressMessage(planChatTools("Make this into a local HTML page.")),
+    "Got it — I’ll create that in your private local artifacts folder.",
+  );
+});
+
 test("the capability broker accepts only known categories", () => {
   assert.equal(parseCapabilityCategory("reference"), "reference");
   assert.equal(parseCapabilityCategory("web"), "web");

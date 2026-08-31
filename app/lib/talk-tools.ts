@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ABLETON_FUNCTION_DECLARATIONS, isAbletonTool, runAbletonTool } from "@/lib/ableton/tools";
+import { writeArtifact } from "@/lib/artifacts";
 import { saveMemoryNote } from "@/lib/bookkeeping";
 import { listDocuments, readDocument, writeDocument, type WriteMode } from "@/lib/documents";
 import { appendContactLog, readContacts } from "@/lib/contacts";
@@ -13,6 +14,7 @@ import { DATA_ROOT, REPO_ROOT, dataPath, repoPath } from "@/lib/paths";
 // (.env, node_modules, the rest of the machine) is refused with a string the
 // model can read back to the artist.
 const READABLE_DIRECTORIES = [
+  { area: "artifacts", relative: "artifacts", storage: "data" },
   { area: "memory", relative: "memory", storage: "data" },
   { area: "plans", relative: "plans", storage: "data" },
   { area: "transcripts", relative: path.join("conversation", "transcripts"), storage: "data" },
@@ -29,7 +31,7 @@ const READABLE_FILES = [
   { area: "rules", relative: "AGENTS.md", storage: "repo" },
 ];
 
-const READABLE_EXTENSIONS = new Set([".md", ".json", ".txt"]);
+const READABLE_EXTENSIONS = new Set([".css", ".csv", ".html", ".js", ".json", ".md", ".svg", ".txt"]);
 const MAX_FILE_BYTES = 50 * 1024;
 const MAX_HITS = 10;
 const CONTEXT_LINES = 2;
@@ -330,6 +332,21 @@ export async function runStudioTool(
       return searchStudioFiles(args.query, args.area);
     case "read_studio_file":
       return readStudioFile(args.path);
+    case "write_studio_file":
+      try {
+        return {
+          result: {
+            ...writeArtifact({
+              path: typeof args.path === "string" ? args.path : "",
+              content: typeof args.content === "string" ? args.content : "",
+              overwrite: args.overwrite === true,
+            }),
+            note: "Saved as a private local artifact in the external student-data folder. Report the exact path; do not paste the file contents into chat.",
+          },
+        };
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : "Could not save that local artifact." };
+      }
     case "draft_email":
       return await draftEmail(args, context);
     case "search_contacts":
@@ -542,6 +559,29 @@ export const FUNCTION_DECLARATIONS = [
         path: { type: "STRING", description: "Studio-relative path, e.g. memory/working-self.md." },
       },
       required: ["path"],
+    },
+  },
+  {
+    name: "write_studio_file",
+    description:
+      "Create a private local artifact in the external student-data folder, such as an HTML page, script, SVG, CSV, or markdown file. Use this instead of pasting a large file into the conversation. Paths are relative to artifacts/ and may use subfolders. Existing files are protected unless overwrite is true and the artist asked to replace them. After saving, report the exact returned path and summarize the result briefly; never duplicate the full content in chat.",
+    parameters: {
+      type: "OBJECT",
+      properties: {
+        path: {
+          type: "STRING",
+          description: "Filename under artifacts/, e.g. indian-rudiments.html or practice/routine.html.",
+        },
+        content: {
+          type: "STRING",
+          description: "The complete file contents. Put the artifact here, not in the visible conversation.",
+        },
+        overwrite: {
+          type: "BOOLEAN",
+          description: "Set true only when the artist explicitly asked to replace an existing artifact.",
+        },
+      },
+      required: ["path", "content"],
     },
   },
   {

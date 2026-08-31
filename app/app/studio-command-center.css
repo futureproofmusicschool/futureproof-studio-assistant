@@ -37,56 +37,6 @@
   padding: 0 34px;
 }
 
-.talk-heading {
-  align-items: flex-end;
-  gap: clamp(36px, 7vw, 110px);
-  padding: clamp(30px, 4vh, 48px) 0 clamp(24px, 3vh, 34px);
-}
-
-.talk-heading-copy {
-  min-width: 0;
-}
-
-.talk-heading h1 {
-  font-family: "Panchang", "Satoshi", sans-serif;
-  font-size: clamp(31px, 4vw, 56px);
-  font-weight: 700;
-  letter-spacing: -0.055em;
-  line-height: 1.04;
-  max-width: 760px;
-  text-wrap: balance;
-}
-
-.talk-heading h1 span {
-  display: block;
-  padding-left: clamp(22px, 4vw, 66px);
-  position: relative;
-}
-
-.talk-heading h1 span::before {
-  background: var(--accent);
-  content: "";
-  height: 2px;
-  left: 0;
-  position: absolute;
-  top: 0.62em;
-  width: clamp(13px, 2.2vw, 38px);
-}
-
-.talk-heading > p {
-  border-top: 1px solid var(--line-strong);
-  font-size: 13px;
-  line-height: 1.55;
-  max-width: 350px;
-  padding-top: 12px;
-  text-align: left;
-}
-
-.talk-heading > p strong {
-  color: var(--text);
-  font-weight: 700;
-}
-
 .talk-workspace {
   border-top: 1px solid var(--line);
   display: grid;
@@ -475,15 +425,6 @@
 }
 
 @media (max-height: 700px) and (min-width: 761px) {
-  .talk-heading {
-    padding-bottom: 18px;
-    padding-top: 22px;
-  }
-
-  .talk-heading h1 {
-    font-size: clamp(31px, 3.4vw, 47px);
-  }
-
   .talk-conversation-column,
   .project-status-rail {
     padding-top: 13px;
@@ -581,16 +522,6 @@
     min-height: 100%;
   }
 
-  .talk-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 20px;
-  }
-
-  .talk-heading > p {
-    max-width: 520px;
-  }
-
   .talk-workspace {
     display: flex;
     flex-direction: column;
@@ -637,10 +568,6 @@
 @media (max-width: 620px) {
   .talk-page {
     padding-inline: 16px;
-  }
-
-  .talk-heading h1 {
-    font-size: clamp(27px, 8vw, 38px);
   }
 
   .talk-turn[data-side="assistant"],

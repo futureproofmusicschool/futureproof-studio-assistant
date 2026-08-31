@@ -448,20 +448,6 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
 
   return (
     <section className="talk-page chat-page" data-public-preview={publicPreview ? "true" : "false"}>
-      <header className="talk-heading">
-        <div className="talk-heading-copy">
-          <p className="eyebrow">{publicPreview ? "Working product · public preview" : "One conversation · typed or spoken"}</p>
-          <h1>
-            The studio partner{" "}
-            <span>that never forgets.</span>
-          </h1>
-        </div>
-        <p>
-          <strong>One creative thread.</strong> Type, speak, share a file, or work directly in Ableton. {assistantName}{" "}
-          carries the decisions forward.
-        </p>
-      </header>
-
       {publicPreview ? null : <SetupPanel />}
 
       <div className="talk-workspace">
