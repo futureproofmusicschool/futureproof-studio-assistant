@@ -200,11 +200,12 @@ export async function buildSystemInstruction(
   const workingSelf = readOrEmpty(WORKING_SELF_PATH);
   const purpose = modePurpose(modeId, assistantName);
   const referenceDocs = listReferenceDocs();
+  const voiceContext = modality === "voice" ? await Promise.all([contactsDigest(), abletonDigest()]) : null;
   const liveContext =
     modality === "voice"
       ? [
-          `## Outreach right now\n\n${await contactsDigest()}`,
-          `## Ableton right now\n\n${await abletonDigest()}`,
+          `## Outreach right now\n\n${voiceContext![0]}`,
+          `## Ableton right now\n\n${voiceContext![1]}`,
         ]
       : [
           "## Outreach\n\nOutreach data is loaded on demand. Use search_contacts and read_contact when the artist asks about a person or correspondence; do not guess from stale context.",

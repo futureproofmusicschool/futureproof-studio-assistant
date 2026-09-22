@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Board, BoardCard, BoardList } from "@/lib/board";
@@ -79,7 +80,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch("/api/board", { cache: "no-store" });
+      const response = await clientFetch("/api/board", { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
       setBoard((await response.json()) as Board);
       setError(null);
@@ -115,7 +116,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
       setError(null);
       let requestError: Error | null = null;
       try {
-        const response = await fetch(path, {
+        const response = await clientFetch(path, {
           method: options.method,
           headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
           body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -127,7 +128,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
       }
       await refresh();
       setBusy(false);
-      if (requestError) throw requestError;
+      if (requestError) { setError(requestError.message); throw requestError; }
     },
     [refresh],
   );
@@ -202,7 +203,7 @@ export function BoardView({ initialBoard }: BoardViewProps) {
 
     let requestError: Error | null = null;
     try {
-      const response = await fetch("/api/board/lists/reorder", {
+      const response = await clientFetch("/api/board/lists/reorder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ order: nextLists.map((list) => list.id) }),

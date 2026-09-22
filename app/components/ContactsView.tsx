@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -27,10 +28,6 @@ const STATUS_LABELS: Record<ContactStatus, string> = {
   declined: "Declined",
 };
 
-// Preserve the latest successful Sheet snapshot across client-side route
-// changes. A background refresh still runs, but returning to Contacts is
-// instant instead of blank while the serialized connector calls complete.
-let cachedContacts: Contacts | null = null;
 
 async function responseError(response: Response) {
   try {
@@ -68,33 +65,36 @@ export function ContactsView({
   identityInSheet = true,
   loadOnMount = false,
 }: ContactsViewProps) {
-  const [contacts, setContacts] = useState(() => cachedContacts ?? initialContacts);
+  const [contacts, setContacts] = useState(() => initialContacts);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [addingTo, setAddingTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(loadOnMount && cachedContacts === null);
+  const [loading, setLoading] = useState(loadOnMount);
   const requestedInitialLoad = useRef(false);
+  const refreshVersion = useRef(0);
 
   const editingContact = contacts.contacts.find((entry) => entry.id === editingId) ?? null;
 
   const refresh = useCallback(async () => {
-    setLoading(cachedContacts === null);
+    const version = ++refreshVersion.current;
+
     try {
-      const response = await fetch("/api/contacts", { cache: "no-store" });
+      const response = await clientFetch("/api/contacts", { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
       const next = (await response.json()) as Contacts;
-      cachedContacts = next;
+      if (version !== refreshVersion.current) return null;
       setContacts(next);
       setError(null);
       return null;
     } catch (loadError) {
+      if (version !== refreshVersion.current) return null;
       const failure =
         loadError instanceof Error ? loadError : new Error("Unable to refresh contacts");
       setError(refreshFailureMessage(failure));
       return failure;
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
   }, []);
 
@@ -105,7 +105,8 @@ export function ContactsView({
     }
     const handleFocus = () => void refresh();
     window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
+    window.addEventListener("studio-data-invalidated", handleFocus);
+    return () => { window.removeEventListener("focus", handleFocus); window.removeEventListener("studio-data-invalidated", handleFocus); };
   }, [loadOnMount, refresh]);
 
   const mutate = useCallback(
@@ -115,7 +116,7 @@ export function ContactsView({
       let requestError: Error | null = null;
       let requestWarning: string | null = null;
       try {
-        const response = await fetch(path, {
+        const response = await clientFetch(path, {
           method: options.method,
           headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
           body: options.body === undefined ? undefined : JSON.stringify(options.body),

@@ -1,3 +1,4 @@
+import { PodHdPanel } from "@/components/PodHdPanel";
 import { AbletonPanel } from "@/components/AbletonPanel";
 import { ComposerPanel } from "@/components/ComposerPanel";
 import { GeminiKeyPanel } from "@/components/GeminiKeyPanel";
@@ -63,6 +64,8 @@ export default function SettingsPage() {
           </p>
           <AbletonPanel />
         </div>
+
+        <PodHdPanel />
 
         <div className="settings-block">
           <h2>Composer</h2>

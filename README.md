@@ -20,7 +20,7 @@ That is the foundation. MCP tools, skills, automation, and the local app sit on 
 1. **Copy this repo** or click **Use this template** on GitHub.
 2. **Install Node.js 18.18 or newer.**
 3. **Run `scripts/init.sh`.** It creates or reconnects your external student-data directory and installs a pre-commit guard. On macOS the default is `~/Library/Application Support/Futureproof Studio Assistant/`. Existing repo-local data is migrated without overwriting anything.
-4. **Start the app** (`npm install --prefix app && npm run dev --prefix app`) and paste a Google Gemini API key into Settings. Talking, writing MIDI, and filing sessions into memory all run on that key.
+4. **Start the app** (`npm install --prefix app && npm run build --prefix app && npm start --prefix app`) and paste a Google Gemini API key into Settings. Talking, writing MIDI, and filing sessions into memory all run on that key.
 5. **Connect Google services** from Settings. Automatic mode reuses a detected Codex or Claude Code connector host and verifies Drive and Gmail separately. Drive is required for native Docs plus the managed Contacts and History Sheet; Gmail is optional for drafts. Normal setup does not require a Google Cloud project. See [Google services setup](docs/google-setup.md) and the exact [data-flow boundary](docs/data-flow.md).
 6. **Optional: use that client for deeper work too.** Claude Code (`claude`) or Codex (`codex`) can open the repo as a working session, which is better for auditing memory, editing prompts, and changing the assistant itself. A coding workspace is not required for the assistant to remember things. Connector-backed Google features do require the selected host to be installed and signed in.
 7. **Personalize the compatibility paths:**
@@ -90,8 +90,11 @@ Or from a terminal:
 ```bash
 cd app
 npm install
-npm run dev
+npm run build
+npm start
 ```
+
+Production builds are versioned under `app/.studio-builds/`. Rebuild after changing source code; the launcher rejects stale builds. `npm run dev --prefix app` remains available for development and uses its own `.next` directory. The double-click launcher builds automatically when needed.
 
 Open [http://127.0.0.1:3017](http://127.0.0.1:3017). The server only listens on this machine. The app has five tabs:
 

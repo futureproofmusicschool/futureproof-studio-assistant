@@ -16,6 +16,7 @@ import {
 } from "@/lib/connectors/state";
 import {
   callGoogleConnectorTool,
+  connectorAccountVersion,
   requireAgentConnectorHost,
 } from "@/lib/connectors/google-runtime";
 import {
@@ -67,6 +68,7 @@ let verifiedWorkspace: {
   host: AgentConnectorHost;
   workspace: ConnectorWorkspaceState;
   expiresAt: number;
+  accountVersion: number;
 } | null = null;
 const WORKSPACE_CACHE_MS = 5 * 60_000;
 
@@ -403,16 +405,23 @@ async function createWorkspace(): Promise<{ host: AgentConnectorHost; workspace:
 
 export async function ensureConnectorWorkspace() {
   const selectedHost = await requireAgentConnectorHost("drive");
-  if (verifiedWorkspace?.host === selectedHost && verifiedWorkspace.expiresAt > Date.now()) {
+  const accountVersion = connectorAccountVersion();
+  if (verifiedWorkspace?.host === selectedHost && verifiedWorkspace.accountVersion === connectorAccountVersion() && verifiedWorkspace.expiresAt > Date.now()) {
     return { host: selectedHost, workspace: verifiedWorkspace.workspace };
   }
-  if (workspaceInFlight) return workspaceInFlight;
-  workspaceInFlight = createWorkspace();
+  if (workspaceInFlight) {
+    const pending = await workspaceInFlight;
+    if (accountVersion !== connectorAccountVersion()) throw new Error("The Google connection changed. Retry this request.");
+    if (pending.host === selectedHost) return pending;
+  }
+  const operation = createWorkspace();
+  workspaceInFlight = operation;
   try {
-    const resolved = await workspaceInFlight;
-    verifiedWorkspace = { ...resolved, expiresAt: Date.now() + WORKSPACE_CACHE_MS };
+    const resolved = await operation;
+    if (accountVersion !== connectorAccountVersion() || resolved.host !== selectedHost) throw new Error("The Google connection changed. Retry this request.");
+    verifiedWorkspace = { ...resolved, accountVersion, expiresAt: Date.now() + WORKSPACE_CACHE_MS };
     return resolved;
   } finally {
-    workspaceInFlight = null;
+    if (workspaceInFlight === operation) workspaceInFlight = null;
   }
 }

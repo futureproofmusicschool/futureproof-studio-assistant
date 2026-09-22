@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "node server.js",
-    "build": "next build",
-    "start": "NODE_ENV=production node server.js",
-    "test": "node --import tsx --test tests/**/*.test.ts"
+    "build": "node ../scripts/build-production.mjs",
+    "start": "node ../scripts/start-production.mjs",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -13,24 +13,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-function defaultDataRoot() {
-  const override = process.env.STUDIO_ASSISTANT_DATA_DIR?.trim();
-  if (override) return path.resolve(override);
-
-  if (process.platform === "darwin") {
-    return path.join(os.homedir(), "Library", "Application Support", "Futureproof Studio Assistant");
-  }
-  if (process.platform === "win32") {
-    return path.join(
-      process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"),
-      "Futureproof Studio Assistant",
-    );
-  }
-  return path.join(
-    process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
-    "futureproof-studio-assistant",
-  );
-}
+const { defaultDataRoot } = require("./runtime/config.js");
+const { atomicWrite, readJson, writeJson } = require("./runtime/files.js");
 
 const DATA_ROOT = defaultDataRoot();
 const CONVERSATION_DIR = path.join(DATA_ROOT, "conversation");
@@ -107,7 +91,25 @@ function readTurns(options = {}) {
 
   let raw;
   try {
-    raw = fs.readFileSync(THREAD_PATH, "utf8");
+    if (limit <= 0) raw = fs.readFileSync(THREAD_PATH, "utf8");
+    else {
+      const fd = fs.openSync(THREAD_PATH, "r");
+      try {
+        let position = fs.fstatSync(fd).size;
+        const chunks = [];
+        let lines = 0;
+        while (position > 0 && lines <= limit + 1) {
+          const size = Math.min(position, 64 * 1024);
+          position -= size;
+          const chunk = Buffer.alloc(size);
+          fs.readSync(fd, chunk, 0, size, position);
+          for (const byte of chunk) if (byte === 10) lines++;
+          chunks.unshift(chunk);
+        }
+        raw = Buffer.concat(chunks).toString("utf8");
+        if (position > 0) raw = raw.slice(raw.indexOf("\n") + 1);
+      } finally { fs.closeSync(fd); }
+    }
   } catch (error) {
     if (error.code === "ENOENT") return [];
     throw error;
@@ -159,21 +161,16 @@ function selectModelTurns(turns, charBudget = MODEL_HISTORY_CHAR_BUDGET) {
 }
 
 function readState() {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  const state = readJson(STATE_PATH, {});
+  if (!state || typeof state !== "object" || Array.isArray(state)) throw new Error("Conversation state is invalid.");
+  return state;
 }
 
 /** Write through a temp file so a crash never leaves a truncated state file. */
 function patchState(partial) {
   const next = { ...readState(), ...partial };
   ensureDir(CONVERSATION_DIR);
-  const temporary = `${STATE_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  fs.renameSync(temporary, STATE_PATH);
+  writeJson(STATE_PATH, next);
   return next;
 }
 
@@ -182,22 +179,7 @@ function patchState(partial) {
  * repeats the tail of the previous fragment often enough that plain
  * concatenation stutters. Ported from Kadence's mergeTranscriptText.
  */
-function mergeTranscriptText(previous, next) {
-  const before = previous || "";
-  const addition = next || "";
-  if (!before) return addition;
-  if (!addition) return before;
-
-  const maxOverlap = Math.min(before.length, addition.length);
-  for (let size = maxOverlap; size > 0; size -= 1) {
-    if (before.slice(-size) === addition.slice(0, size)) {
-      return before + addition.slice(size);
-    }
-  }
-
-  const needsSpace = !/\s$/.test(before) && !/^\s/.test(addition);
-  return needsSpace ? `${before} ${addition}` : before + addition;
-}
+const { mergeTranscriptText } = require("./transcript-text.js");
 
 /**
  * Prior thread turns to hand a brand new Live session, newest-first under a
@@ -243,10 +225,12 @@ function compactAfterFiling(keepCount = 400) {
   if (all.length <= keepCount) return all.length;
 
   ensureDir(CONVERSATION_DIR);
-  const kept = all.slice(-keepCount);
-  const temporary = `${THREAD_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${kept.map((turn) => JSON.stringify(turn)).join("\n")}\n`, "utf8");
-  fs.renameSync(temporary, THREAD_PATH);
+  const marker = readState().lastFiledTurnId;
+  const completed = all.findIndex((turn) => turn.id === marker);
+  if (completed < 0) return all.length;
+  const keepFrom = Math.min(completed + 1, Math.max(0, all.length - keepCount));
+  const kept = all.slice(keepFrom);
+  atomicWrite(THREAD_PATH, `${kept.map((turn) => JSON.stringify(turn)).join("\n")}\n`);
   return kept.length;
 }
 

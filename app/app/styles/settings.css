@@ -1,0 +1,268 @@
+/* Settings tab: identity, API access, Ableton, composer, and reference shelf. */
+
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  margin: 0 auto;
+  max-width: 980px;
+  min-height: 0;
+  padding: 0 28px;
+}
+
+.settings-heading {
+  align-items: flex-end;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 24px;
+  justify-content: space-between;
+  padding: 28px 0 20px;
+}
+
+.settings-heading h1 {
+  font-size: clamp(27px, 3vw, 36px);
+  font-weight: 670;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 0;
+}
+
+.settings-heading > p {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 3px;
+  max-width: 380px;
+  text-align: right;
+}
+
+.settings-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 28px;
+}
+
+.settings-block {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.settings-block h2 {
+  font-size: 15px;
+  margin: 0 0 6px;
+}
+
+.settings-block-hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 0 0 4px;
+  max-width: 640px;
+}
+
+.data-location {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 10px 12px;
+}
+
+.data-location span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.data-location code {
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* These panels drew their own top rule when they sat under the Talk screen;
+   inside a settings block the block itself is the boundary. */
+.settings-block .ableton-panel,
+.settings-block .composer-panel,
+.settings-block .reference-panel {
+  border-top: 0;
+  margin-top: 10px;
+  padding-top: 0;
+}
+
+.settings-error {
+  color: #f0b3b3;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.settings-fields {
+  align-items: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.settings-fields label {
+  display: flex;
+  flex: 1 1 200px;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-fields label span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.settings-fields input {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.settings-fields button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+.settings-fields button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.api-key-panel {
+  margin-top: 12px;
+}
+
+.api-key-status {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.api-key-saved {
+  color: #8fc99d;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.api-key-entry {
+  align-items: flex-end;
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.api-key-entry label {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.api-key-entry label > span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.api-key-entry input {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  min-width: 0;
+  padding: 9px 12px;
+  width: 100%;
+}
+
+.api-key-entry button {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 16px;
+}
+
+.api-key-entry button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.api-key-note {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin: 9px 0 0;
+}
+
+.api-key-note code {
+  color: var(--text);
+  font-size: 0.95em;
+}
+
+.google-workspace-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.google-workspace-links a {
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+.google-workspace-links a:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+@media (max-width: 620px) {
+  .api-key-entry {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .api-key-entry button {
+    align-self: flex-start;
+  }
+}
+

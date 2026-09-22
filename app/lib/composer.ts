@@ -1,3 +1,4 @@
+import { boundedFetch } from "./request-deadline";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -303,7 +304,7 @@ async function composeWithGemini(prompt: string, lengthBeats: number) {
   const key = readGeminiApiKey();
   if (!key) throw new Error("No Gemini API key is saved. Add one in Settings.");
 
-  const response = await fetch(
+  const response = await boundedFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${COMPOSER_GEMINI_MODEL}:generateContent`,
     {
       method: "POST",
@@ -372,7 +373,14 @@ async function composeWithAnthropicApi(prompt: string, lengthBeats: number) {
 const run = promisify(execFile);
 
 /** Whether the `claude` CLI is on PATH. Used to warn before the backend is picked. */
-export async function claudeCodeAvailable(): Promise<boolean> {
+let cliAvailability: { until: number; value: Promise<boolean> } | null = null;
+export function claudeCodeAvailable(): Promise<boolean> {
+  if (cliAvailability && cliAvailability.until > Date.now()) return cliAvailability.value;
+  const value = inspectClaudeCode();
+  cliAvailability = { until: Date.now() + 30_000, value };
+  return value;
+}
+async function inspectClaudeCode(): Promise<boolean> {
   try {
     await run("claude", ["--version"], { timeout: 10_000 });
     return true;

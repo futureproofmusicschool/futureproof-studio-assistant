@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, session, shell } from "electron";
+import { resolveProductionBuild } from "./production-build.mjs";
 import { probeServer as probeStudioServer } from "./server-probe.mjs";
 
 const PORT = Number(process.env.PORT || 3017);
@@ -76,6 +77,7 @@ async function ensureServer() {
   // Electron doubles as the Node runtime, so a GUI launch (no shell PATH,
   // possibly no system node) still works. Server output lands in
   // ~/Library/Logs/studio-assistant-desktop.log for diagnosing GUI launches.
+  const distDir = resolveProductionBuild(serverDir);
   const logPath = path.join(os.homedir(), "Library", "Logs", "studio-assistant-desktop.log");
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   const logFd = fs.openSync(logPath, "a");
@@ -83,16 +85,21 @@ async function ensureServer() {
 
   serverProcess = spawn(process.execPath, ["server.js"], {
     cwd: serverDir,
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", PORT: String(PORT) },
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", NODE_ENV: "production", STUDIO_NEXT_DIST_DIR: distDir, PORT: String(PORT) },
     stdio: ["ignore", logFd, logFd],
     detached: false,
   });
-  serverProcess.on("exit", () => {
+  fs.closeSync(logFd);
+  let launchError = null;
+  serverProcess.on("error", (error) => { launchError = error; });
+  serverProcess.on("exit", (code) => {
+    launchError = new Error(`The app server exited before startup (code ${code}).`);
     serverProcess = null;
   });
 
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    if (launchError) throw launchError;
     if ((await probeServer()) === "studio") return;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -142,7 +149,7 @@ app.whenReady().then(async () => {
   try {
     await ensureServer();
   } catch (error) {
-    dialog.showErrorBox("Studio Assistant", `${error.message}\n\nStart it by hand with: npm run dev --prefix app`);
+    dialog.showErrorBox("Studio Assistant", `${error.message}\n\nBuild and start it with: npm run build --prefix app && npm start --prefix app`);
     app.quit();
     return;
   }

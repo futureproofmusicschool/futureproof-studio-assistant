@@ -1,13 +1,18 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AbletonChip } from "@/components/AbletonPanel";
 import { ProjectStatusRail } from "@/components/ProjectStatusRail";
 import { SetupPanel } from "@/components/SetupPanel";
-import { WorkingDots } from "@/components/Working";
-import { TOOL_SPEAKER, useGeminiLive } from "@/hooks/useGeminiLive";
+import { beginWork, WorkingDots } from "@/components/Working";
+import { TOOL_SPEAKER } from "@/hooks/useGeminiLive";
+import { useLiveSession } from "./LiveSessionProvider";
+import { MicrophoneMeter } from "./MicrophoneMeter";
+import { ChatComposer } from "./ChatComposer";
+import { frameBuffer } from "@/lib/frame-buffer";
 import type { TalkMode } from "@/lib/talk";
 
 /**
@@ -32,7 +37,7 @@ type NewStreamItem =
   | { kind: "progress"; text: string }
   | { kind: "notice"; text: string };
 
-type StreamItem = NewStreamItem & { id: number };
+type StreamItem = NewStreamItem & { id: string | number };
 
 type AttachmentInfo = { kind: string; name: string };
 
@@ -57,6 +62,7 @@ type ThreadTurn = {
   role: "user" | "assistant" | "tool";
   text: string;
   attachment?: AttachmentInfo;
+  createdAt?: number;
 };
 
 const PUBLIC_PREVIEW_ITEMS: StreamItem[] = [
@@ -89,9 +95,54 @@ const CALL_STATUS_LABEL: Record<string, string> = {
   reconnecting: "Reconnecting",
 };
 
+const ConversationRow = memo(function ConversationRow({ item, assistantName, userName }: { item: StreamItem; assistantName: string; userName: string }) {
+          if (item.kind === "tool") {
+            return (
+              <p className="talk-tool-chip" data-running={item.status === "running" ? "true" : "false"} >
+                <span aria-hidden="true" />
+                {item.name} {item.status === "running" ? "running" : item.status === "error" ? "failed" : "done"}
+              </p>
+            );
+          }
+          if (item.kind === "progress") {
+            return (
+              <article className="talk-turn" data-side="assistant"  role="status">
+                <span className="talk-turn-speaker">{assistantName}</span>
+                <div className="talk-turn-text">
+                  <WorkingDots label={item.text} />
+                </div>
+              </article>
+            );
+          }
+          if (item.kind === "notice") {
+            return (
+              <p className="chat-notice" >
+                {item.text}
+              </p>
+            );
+          }
+          return (
+            <article className="talk-turn" data-side={item.role === "user" ? "user" : "assistant"} >
+              <span className="talk-turn-speaker">{item.role === "user" ? userName : assistantName}</span>
+              {item.attachment ? (
+                <p className="chat-attachment-line">
+                  {item.attachment.kind}: {item.attachment.name}
+                </p>
+              ) : null}
+              {item.role === "user" ? (
+                <p className="talk-turn-text">{item.text}</p>
+              ) : (
+                <div className="talk-turn-text chat-markdown">
+                  <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
+                </div>
+              )}
+            </article>
+          );
+
+});
+
 export function ConversationView({ assistantName, userName, modes, publicPreview = false }: ConversationViewProps) {
   const [items, setItems] = useState<StreamItem[]>(() => (publicPreview ? PUBLIC_PREVIEW_ITEMS : []));
-  const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [research, setResearch] = useState<ResearchJob[]>([]);
@@ -99,14 +150,15 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
   const [modeId, setModeId] = useState(modes[0]?.id ?? "open");
   const [filing, setFiling] = useState(false);
   const [filed, setFiled] = useState<string | null>(null);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [lastFiledDay, setLastFiledDay] = useState<string | null>(null);
 
+  const activeCallRef = useRef(false);
+  const callStartRef = useRef<number | null>(null);
+  const sendingRef = useRef(false);
   const nextIdRef = useRef(1);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const append = useCallback((item: NewStreamItem) => {
     const id = nextIdRef.current;
@@ -117,8 +169,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
 
   const toStreamItems = useCallback((turns: ThreadTurn[]) => {
     return turns.map((turn) => {
-      const id = nextIdRef.current;
-      nextIdRef.current += 1;
+      const id = turn.id;
       return turn.role === "tool"
         ? ({ id, kind: "tool", name: turn.text, status: "done" } as StreamItem)
         : ({
@@ -133,11 +184,12 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
 
   const loadThread = useCallback(async () => {
     try {
-      const body = (await (await fetch("/api/conversation", { cache: "no-store" })).json()) as {
+      const body = (await (await clientFetch("/api/conversation", { cache: "no-store" })).json()) as {
         turns?: ThreadTurn[];
         lastFiledDay?: string | null;
       };
-      setItems(toStreamItems(body.turns ?? []));
+      const turns = body.turns ?? [];
+      setItems(toStreamItems(turns.filter((turn) => !activeCallRef.current || !callStartRef.current || (turn.createdAt ?? 0) < callStartRef.current || turn.attachment)));
       setLastFiledDay(body.lastFiledDay ?? null);
     } catch {
       // An unreadable thread is an empty conversation, not an error worth a banner.
@@ -157,7 +209,8 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     error: callError,
     turns: callTurns,
     toolActivity,
-    micLevel,
+    meter,
+    callStartedAt,
     muted,
     setMuted,
     idleSecondsLeft,
@@ -166,13 +219,14 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     disconnect,
     sendText: sendToCall,
     clearError: clearCallError,
-  } = useGeminiLive({
-    userLabel: userName,
-    assistantLabel: assistantName,
-    onAutoEnd: () => void loadThread(),
-  });
+  } = useLiveSession();
 
   const inCall = status === "connecting" || status === "live" || status === "reconnecting";
+  activeCallRef.current = inCall;
+  callStartRef.current = callStartedAt;
+  useEffect(() => {
+    if (!publicPreview && (status === "ended" || status === "error")) void loadThread();
+  }, [status, loadThread, publicPreview]);
   const runningTools = new Set(
     toolActivity.filter((entry) => entry.status === "running").map((entry) => `${entry.name} running`),
   );
@@ -203,13 +257,17 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
   // Deep research keeps running after the turn that started it ends.
   // ------------------------------------------------------------------
 
+  const researchRef = useRef<ResearchJob[]>([]);
+  const researchPending = useRef(false);
   const refreshResearch = useCallback(async () => {
+    if (researchPending.current) return;
+    researchPending.current = true;
     try {
-      const listed = (await (await fetch("/api/chat/research")).json()) as { jobs?: ResearchJob[] };
+      const listed = (await (await clientFetch("/api/chat/research")).json()) as { jobs?: ResearchJob[] };
       const jobs = listed.jobs ?? [];
 
       for (const job of jobs.filter((entry) => entry.status === "in_progress")) {
-        const polled = (await (await fetch(`/api/chat/research?id=${encodeURIComponent(job.id)}`)).json()) as {
+        const polled = (await (await clientFetch(`/api/chat/research?id=${encodeURIComponent(job.id)}`)).json()) as {
           job?: ResearchJob;
         };
         if (polled.job && polled.job.status !== "in_progress") {
@@ -223,11 +281,20 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
         }
       }
 
-      const refreshed = (await (await fetch("/api/chat/research")).json()) as { jobs?: ResearchJob[] };
-      setResearch(refreshed.jobs ?? jobs);
+      const refreshed = (await (await clientFetch("/api/chat/research")).json()) as { jobs?: ResearchJob[] };
+      const nextJobs = refreshed.jobs ?? jobs;
+      for (const previous of researchRef.current) {
+        const next = nextJobs.find((job) => job.id === previous.id);
+        // Jobs already completed by the scheduler will not enter the loop above.
+        if (previous.status === "in_progress" && next && next.status !== "in_progress" && jobs.find((job) => job.id === next.id)?.status !== "in_progress") {
+          append({ kind: "notice", text: next.status === "completed" ? `Deep research finished: "${next.query}". Report saved to ${next.webViewLink ?? "Google Docs"}.` : `Deep research failed: "${next.query}".` });
+        }
+      }
+      researchRef.current = nextJobs;
+      setResearch(nextJobs);
     } catch {
       // Polling never raises its own banner.
-    }
+    } finally { researchPending.current = false; }
   }, [append]);
 
   useEffect(() => {
@@ -253,7 +320,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
       if (note) form.append("note", note);
       if (inCall) form.append("context", "live");
 
-      const response = await fetch("/api/conversation/upload", { method: "POST", body: form });
+      const response = await clientFetch("/api/conversation/upload", { method: "POST", body: form });
       const body = (await response.json()) as {
         turn?: ThreadTurn;
         liveText?: string;
@@ -266,17 +333,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     [inCall],
   );
 
-  const send = useCallback(async () => {
-    if (publicPreview) return;
-    const text = draft.trim();
-    const file = pendingFile;
-    if ((!text && !file) || busy || uploading) return;
-
-    setDraft("");
-    // Cleared before anything async can touch it, so a staged file can never
-    // ride along with a later message.
-    setPendingFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+  const send = useCallback(async (text: string, file: File | null) => {
     setError(null);
     setFiled(null);
     pinnedRef.current = true;
@@ -319,12 +376,14 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     setBusy(true);
     if (!answerOnly) append({ kind: "turn", role: "user", text });
 
+    const finishWork = beginWork("Working on your message");
     let modelItemId: number | null = null;
     let progressItemId: number | null = append({
       kind: "progress",
       text: "Got it — I’m working on that now.",
     });
     const toolItemIds = new Map<string, number>();
+    let flushStream = () => {};
 
     const removeProgress = () => {
       if (progressItemId === null) return;
@@ -334,7 +393,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     };
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await clientFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(answerOnly ? { answerOnly: true } : { text }),
@@ -349,7 +408,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
       const decoder = new TextDecoder();
       let pending = "";
 
-      const handleEvent = (event: StreamEvent) => {
+      const applyEvent = (event: StreamEvent) => {
         if (event.type === "status") {
           if (progressItemId !== null) {
             const id = progressItemId;
@@ -392,6 +451,12 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
         }
       };
 
+      const buffered = frameBuffer((delta) => applyEvent({ type: "text", delta }));
+      flushStream = buffered.flush;
+      const handleEvent = (event: StreamEvent) => {
+        if (event.type === "text") buffered.push(event.delta);
+        else { buffered.flush(); applyEvent(event); }
+      };
       for (;;) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -415,10 +480,12 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
       removeProgress();
       setError(caught instanceof Error ? caught.message : "The request failed.");
     } finally {
+      flushStream();
+      finishWork();
       removeProgress();
       setBusy(false);
     }
-  }, [append, busy, draft, inCall, pendingFile, publicPreview, refreshResearch, sendToCall, uploadPending, uploading]);
+  }, [append, inCall, refreshResearch, sendToCall, uploadPending]);
 
   const fileNow = useCallback(async () => {
     if (publicPreview) return;
@@ -426,7 +493,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
     setFiled(null);
     try {
       const body = (await (
-        await fetch("/api/conversation/file", { method: "POST" })
+        await clientFetch("/api/conversation/file", { method: "POST" })
       ).json()) as { filed?: string[]; filing?: boolean; error?: string };
       if (body.error) throw new Error(body.error);
       setFiled(
@@ -473,9 +540,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
                 <span aria-hidden="true" />
                 {CALL_STATUS_LABEL[status] ?? "In a call"}
               </span>
-              <span className="talk-mic" aria-label={`Microphone level ${Math.round(micLevel * 100)} percent`}>
-                <span className="talk-mic-fill" style={{ transform: `scaleX(${Math.max(0.02, micLevel)})` }} />
-              </span>
+              <MicrophoneMeter meter={meter} />
               <span className="talk-mode-chip">{modes.find((mode) => mode.id === modeId)?.name}</span>
               <AbletonChip />
               <button
@@ -513,7 +578,7 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
 
           <div className="talk-stream-label" aria-hidden="true">
             <span>{publicPreview ? "Sample studio log" : "Live studio log"}</span>
-            <span>{items.length + callTurns.length} entries</span>
+            <span>{items.length + (inCall ? callTurns.length : 0)} entries</span>
           </div>
 
           <div
@@ -531,53 +596,10 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
           </p>
         ) : null}
 
-        {items.map((item) => {
-          if (item.kind === "tool") {
-            return (
-              <p className="talk-tool-chip" data-running={item.status === "running" ? "true" : "false"} key={item.id}>
-                <span aria-hidden="true" />
-                {item.name} {item.status === "running" ? "running" : item.status === "error" ? "failed" : "done"}
-              </p>
-            );
-          }
-          if (item.kind === "progress") {
-            return (
-              <article className="talk-turn" data-side="assistant" key={item.id} role="status">
-                <span className="talk-turn-speaker">{assistantName}</span>
-                <div className="talk-turn-text">
-                  <WorkingDots label={item.text} />
-                </div>
-              </article>
-            );
-          }
-          if (item.kind === "notice") {
-            return (
-              <p className="chat-notice" key={item.id}>
-                {item.text}
-              </p>
-            );
-          }
-          return (
-            <article className="talk-turn" data-side={item.role === "user" ? "user" : "assistant"} key={item.id}>
-              <span className="talk-turn-speaker">{item.role === "user" ? userName : assistantName}</span>
-              {item.attachment ? (
-                <p className="chat-attachment-line">
-                  {item.attachment.kind}: {item.attachment.name}
-                </p>
-              ) : null}
-              {item.role === "user" ? (
-                <p className="talk-turn-text">{item.text}</p>
-              ) : (
-                <div className="talk-turn-text chat-markdown">
-                  <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
-                </div>
-              )}
-            </article>
-          );
-        })}
+        {items.map((item) => <ConversationRow key={item.id} item={item} assistantName={assistantName} userName={userName} />)}
 
         {/* The live call's fragments, replaced by the merged versions on hangup. */}
-        {callTurns.map((turn) =>
+        {(inCall ? callTurns : []).map((turn) =>
           turn.speaker === TOOL_SPEAKER ? (
             <p
               className="talk-tool-chip"
@@ -610,115 +632,22 @@ export function ConversationView({ assistantName, userName, modes, publicPreview
         <ProjectStatusRail
           inCall={inCall}
           lastFiledDay={lastFiledDay}
-          micLevel={micLevel}
+          meter={meter}
           publicPreview={publicPreview}
         />
       </div>
 
-      <div className="talk-composer-shell">
-        {pendingFile ? (
-          <p className="chat-pending-file">
-            <span>{pendingFile.name}</span>
-            <button
-              onClick={() => {
-                setPendingFile(null);
-                if (fileInputRef.current) fileInputRef.current.value = "";
-              }}
-              type="button"
-              aria-label="Remove attachment"
-            >
-              &times;
-            </button>
-          </p>
-        ) : null}
-
-        <div className="talk-composer chat-composer">
-          <input
-            accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.md,.csv,.json,.mid,.midi"
-            hidden
-            onChange={(event) => setPendingFile(event.target.files?.[0] ?? null)}
-            ref={fileInputRef}
-            type="file"
-          />
-          <button
-            className="chat-attach-button"
-            disabled={publicPreview}
-            onClick={() => fileInputRef.current?.click()}
-            title="Attach an image, PDF, text file, or MIDI file"
-            type="button"
-          >
-            Attach
-          </button>
-
-          <textarea
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (publicPreview) return;
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-            placeholder={
-              publicPreview
-                ? "Public preview uses generic studio content."
-                : inCall
-                ? `Type to ${assistantName} instead of speaking`
-                : `Tell ${assistantName} what to do. Shift+Enter for a new line.`
-            }
-            readOnly={publicPreview}
-            rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-            value={draft}
-          />
-
-          {inCall ? null : (
-            <div className="chat-call-wrap">
-              <button
-                className="chat-call-button"
-                disabled={publicPreview}
-                onClick={() => setModePickerOpen((open) => !open)}
-                type="button"
-              >
-                Call
-              </button>
-              {modePickerOpen ? (
-                <div className="chat-mode-popover" role="menu">
-                  {modes.map((mode) => (
-                    <button key={mode.id} onClick={() => void startCall(mode.id)} role="menuitem" type="button">
-                      <strong>{mode.name}</strong>
-                      <span>{mode.description}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          <button
-            disabled={publicPreview || (!draft.trim() && !pendingFile) || busy || uploading}
-            onClick={() => void send()}
-            type="button"
-          >
-            Send
-          </button>
-        </div>
-
-        <p className="chat-session-row">
-          {publicPreview ? (
-            <>
-              <span className="public-preview-lock">Preview safe</span>
-              <span>No private conversation, contacts, or studio information is loaded here.</span>
-            </>
-          ) : (
-            <>
-              <button className="chat-end-button" disabled={filing} onClick={() => void fileNow()} type="button">
-                {filing ? "Filing..." : "File to memory now"}
-              </button>
-              <span>The conversation files itself into memory daily; this does it on the spot.</span>
-            </>
-          )}
-        </p>
-      </div>
+      <ChatComposer assistantName={assistantName} publicPreview={publicPreview} inCall={inCall}
+        busy={busy} uploading={uploading} modes={modes} modePickerOpen={modePickerOpen}
+        setModePickerOpen={setModePickerOpen} startCall={startCall} filing={filing} fileNow={fileNow}
+        onSend={(text, file) => {
+          if (publicPreview || (!text && !file) || busy || uploading || sendingRef.current) return false;
+          if (inCall && status !== "live") return false;
+          if (inCall && !file) return sendToCall(text);
+          sendingRef.current = true;
+          void send(text, file).finally(() => { sendingRef.current = false; });
+          return true;
+        }} />
     </section>
   );
 }

@@ -1,3 +1,5 @@
+import { readJson, writeJson } from "./runtime/files.js";
+import { SingleFlight } from "./single-flight";
 import fs from "node:fs";
 import path from "node:path";
 import { readDocument, writeDocument } from "@/lib/documents";
@@ -36,18 +38,18 @@ type Interaction = {
 };
 
 function readJobs(): ResearchJob[] {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(JOBS_PATH, "utf8")) as { jobs?: ResearchJob[] };
-    return Array.isArray(parsed.jobs) ? parsed.jobs : [];
-  } catch {
-    return [];
-  }
+  const state = readJson<{ jobs: ResearchJob[] }>(JOBS_PATH, { jobs: [] });
+  if (!Array.isArray(state.jobs)) throw new Error("Research jobs file is invalid.");
+  return state.jobs;
 }
-
-function writeJobs(jobs: ResearchJob[]) {
-  ensureDataDirectory("research");
-  fs.writeFileSync(JOBS_PATH, `${JSON.stringify({ jobs }, null, 2)}\n`, "utf8");
+function saveJob(job: ResearchJob) {
+  const jobs = readJobs();
+  const index = jobs.findIndex((entry) => entry.id === job.id);
+  if (index >= 0) jobs[index] = job; else jobs.push(job);
+  writeJson(JOBS_PATH, { jobs });
 }
+const runtime = globalThis as typeof globalThis & { studioResearchChecks?: SingleFlight<ResearchJob & { report?: string }> };
+const checks = runtime.studioResearchChecks ??= new SingleFlight();
 
 export function listResearchJobs(): ResearchJob[] {
   return readJobs();
@@ -79,7 +81,7 @@ export async function startDeepResearch(query: string): Promise<ResearchJob> {
     startedAt: new Date().toISOString(),
     status: "in_progress",
   };
-  writeJobs([...readJobs().filter((existing) => existing.id !== job.id), job]);
+  saveJob(job);
   return job;
 }
 
@@ -100,7 +102,10 @@ function extractReport(interaction: Interaction) {
  * Poll one job. On completion the report becomes a native Google Doc; later
  * checks read that document back. Legacy local report paths remain readable.
  */
-export async function checkDeepResearch(id: string): Promise<ResearchJob & { report?: string }> {
+export function checkDeepResearch(id: string): Promise<ResearchJob & { report?: string }> {
+  return checks.run(id, () => pollResearch(id));
+}
+async function pollResearch(id: string): Promise<ResearchJob & { report?: string }> {
   const jobs = readJobs();
   const job = jobs.find((entry) => entry.id === id);
   if (!job) throw new Error(`No research job with id ${id}. Known jobs: ${jobs.map((entry) => entry.id).join(", ") || "(none)"}.`);
@@ -140,13 +145,13 @@ export async function checkDeepResearch(id: string): Promise<ResearchJob & { rep
     job.documentId = saved.id;
     job.webViewLink = saved.webViewLink;
     delete job.reportPath;
-    writeJobs(jobs);
+    saveJob(job);
     return { ...job, report: report.slice(0, REPORT_PREVIEW_CHARS) };
   }
 
   if (status === "failed") {
     job.status = "failed";
-    writeJobs(jobs);
+    saveJob(job);
     const reason = interaction.error?.message ?? "no reason given";
     return { ...job, report: `The research run failed: ${reason}` };
   }

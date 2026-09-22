@@ -22,7 +22,8 @@
     "files": [
       "main.mjs",
       "server-probe.mjs",
-      "package.json"
+      "package.json",
+      "production-build.mjs"
     ],
     "mac": {
       "category": "public.app-category.music"

@@ -1,3 +1,4 @@
+import { writeJson } from "./runtime/files.js";
 import fs from "node:fs";
 import { dataPath, ensureDataDirectory, repoPath } from "@/lib/paths";
 
@@ -47,6 +48,6 @@ export function writeAssistantConfig(update: { name?: string; userName?: string 
   if (!next.userName) throw new Error("Your name cannot be empty.");
 
   ensureDataDirectory();
-  fs.writeFileSync(dataPath("assistant.json"), `${JSON.stringify(next, null, 2)}\n`);
+  writeJson(dataPath("assistant.json"), next);
   return next;
 }

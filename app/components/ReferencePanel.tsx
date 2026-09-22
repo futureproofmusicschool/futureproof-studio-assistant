@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useEffect, useState } from "react";
 
@@ -12,7 +13,7 @@ export function ReferencePanel() {
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/settings", { cache: "no-store" })
+    void clientFetch("/api/settings", { cache: "no-store" })
       .then((response) => response.json())
       .then((body: { referenceDocs?: string[]; dataDirectory?: string }) => {
         if (active) {

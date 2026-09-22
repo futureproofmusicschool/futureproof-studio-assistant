@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -44,7 +45,7 @@ export function ComposerPanel() {
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/settings", { cache: "no-store" });
+      const response = await clientFetch("/api/settings", { cache: "no-store" });
       const body = (await response.json()) as SettingsState;
       if (mountedRef.current) setState(body);
     } catch {
@@ -64,7 +65,7 @@ export function ComposerPanel() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/settings", {
+      const response = await clientFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

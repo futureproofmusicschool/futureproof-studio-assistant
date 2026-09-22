@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { checkDeepResearch, listResearchJobs } from "@/lib/research";
+import { checkDeepResearch, listResearchJobs, openResearchJobs } from "@/lib/research";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,4 +21,18 @@ export async function GET(request: Request) {
       { status: 500 },
     );
   }
+}
+
+/** The local scheduler finalizes existing jobs even when no page is open. */
+export async function POST() {
+  const jobs = openResearchJobs();
+  let next = 0;
+  let failed = 0;
+  await Promise.all(Array.from({ length: Math.min(2, jobs.length) }, async () => {
+    while (next < jobs.length) {
+      const job = jobs[next++];
+      try { await checkDeepResearch(job.id); } catch { failed++; }
+    }
+  }));
+  return NextResponse.json({ checked: jobs.length, failed });
 }

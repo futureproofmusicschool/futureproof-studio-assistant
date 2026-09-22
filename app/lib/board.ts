@@ -1,3 +1,4 @@
+import { writeJson } from "./runtime/files.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { dataPath, ensureDataDirectory, repoPath } from "@/lib/paths";
@@ -33,7 +34,6 @@ export {
 } from "@/lib/board-list-mutations";
 
 const BOARD_PATH = dataPath("board", "board.json");
-const TEMP_PATH = `${BOARD_PATH}.tmp`;
 const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,8 +106,7 @@ export function readBoard(): Board {
 
 export function writeBoard(board: Board) {
   ensureDataDirectory("board");
-  fs.writeFileSync(TEMP_PATH, `${JSON.stringify(board, null, 2)}\n`, "utf8");
-  fs.renameSync(TEMP_PATH, BOARD_PATH);
+  writeJson(BOARD_PATH, board);
 }
 
 export function createCardId() {

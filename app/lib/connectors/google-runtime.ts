@@ -1,4 +1,5 @@
 import "server-only";
+import { SingleFlight } from "../single-flight";
 
 import fs from "node:fs";
 import os from "node:os";
@@ -263,12 +264,14 @@ function hostSignedIn(host: AgentConnectorHost, codex: CodexInspection, claude: 
     : claude.authentication !== "not-authenticated" && claude.authentication !== "unsupported-provider";
 }
 
-async function inspectStatusUncached(): Promise<GoogleConnectorStatus> {
+async function inspectStatusUncached(fullInventory: boolean): Promise<GoogleConnectorStatus> {
   const selectedHost = readSettings().connectors.host;
   const direct = getGoogleConnectionStatus();
+  const inspectBoth = fullInventory || selectedHost === "auto";
+  const unavailable = { available: false, connected: false };
   const [codex, claude] = await Promise.all([
-    inspectCodex(),
-    inspectClaudeCodeConnectors({ cwd: process.cwd() }),
+    inspectBoth || selectedHost === "codex" ? inspectCodex() : Promise.resolve<CodexInspection>({ available: false, signedIn: false, apps: { drive: unavailable, gmail: unavailable }, tools: [] }),
+    inspectBoth || selectedHost === "claude" ? inspectClaudeCodeConnectors({ cwd: process.cwd() }) : Promise.resolve<ClaudeCodeConnectorInspection>({ available: false, binary: null, version: null, authentication: "unknown", authMethod: null, connectors: {}, installUrl: CLAUDE_CONNECTORS_INSTALL_URL }),
   ]);
   const hosts = {
     codex: { available: codex.available },
@@ -344,7 +347,7 @@ export function usesAgentGoogleConnectors() {
 export async function getGoogleConnectorStatus(options: { forceRefresh?: boolean } = {}) {
   const now = Date.now();
   if (!options.forceRefresh && runtime.status && runtime.status.expiresAt > now) return runtime.status.value;
-  const value = inspectStatusUncached();
+  const value = inspectStatusUncached(Boolean(options.forceRefresh));
   runtime.status = { expiresAt: now + STATUS_CACHE_MS, value };
   try {
     const resolved = await value;
@@ -359,12 +362,15 @@ export async function getGoogleConnectorStatus(options: { forceRefresh?: boolean
 export function clearGoogleConnectorStatusCache() {
   runtime.status = null;
   runtime.lastStatus = null;
+  connectorReads.clear();
+  readVersion++;
+  accountVersion++;
 }
 
 export async function requireAgentConnectorHost(app: GoogleConnectorApp): Promise<AgentConnectorHost> {
   const selected = readSettings().connectors.host;
   const remembered = runtime.lastStatus;
-  const status = remembered && remembered.selectedHost === selected
+  const status = remembered && remembered.selectedHost === selected && runtime.status && runtime.status.expiresAt > Date.now()
     ? remembered
     : await getGoogleConnectorStatus();
   if (status.effectiveHost !== "codex" && status.effectiveHost !== "claude") {
@@ -391,7 +397,27 @@ function claudeToolPrefix(app: GoogleConnectorApp) {
   return mcpServerToolPrefix(app === "drive" ? "claude.ai Google Drive" : "claude.ai Gmail");
 }
 
-export async function callGoogleConnectorTool(
+const connectorReads = new SingleFlight<unknown>();
+let readVersion = 0;
+let accountVersion = 0;
+export function connectorCacheVersion() { return readVersion; }
+export function connectorAccountVersion() { return accountVersion; }
+export async function callGoogleConnectorTool(host: AgentConnectorHost, app: GoogleConnectorApp, toolName: string, args: Record<string, unknown>): Promise<unknown> {
+  const started = performance.now();
+  const read = /_(get|list)_/.test(toolName);
+  const operation = () => performGoogleConnectorTool(host, app, toolName, args);
+  try {
+    if (read) return await connectorReads.run(`${readVersion}:${host}:${app}:${toolName}:${JSON.stringify(args)}`, operation);
+    connectorReads.clear();
+    readVersion++;
+    return await operation();
+  } finally {
+    if (!read) { connectorReads.clear(); readVersion++; }
+    console.info(`[connector] operation=${toolName} total_ms=${Math.round(performance.now() - started)}`);
+  }
+}
+
+async function performGoogleConnectorTool(
   host: AgentConnectorHost,
   app: GoogleConnectorApp,
   toolName: string,
@@ -400,8 +426,10 @@ export async function callGoogleConnectorTool(
   if (!(SAFE_TOOLS as readonly string[]).includes(toolName)) {
     throw new Error(`Google connector tool ${toolName} is not allowed by Studio Assistant.`);
   }
+  const queuedAt = performance.now();
   if (host === "codex") {
     const operation = async () => {
+      console.info(`[connector] operation=${toolName} queue_ms=${Math.round(performance.now() - queuedAt)}`);
       const client = await codexClient();
       let tools = runtime.codexTools?.expiresAt && runtime.codexTools.expiresAt > Date.now()
         ? runtime.codexTools.tools
@@ -438,6 +466,7 @@ export async function callGoogleConnectorTool(
   }
 
   const operation = async () => {
+    console.info(`[connector] operation=${toolName} queue_ms=${Math.round(performance.now() - queuedAt)}`);
     const connector = claudeKind(app);
     const exactTool = `${claudeToolPrefix(app)}__${toolName}`;
     const result = await invokeClaudeConnectorOperation<{ result: unknown }>({

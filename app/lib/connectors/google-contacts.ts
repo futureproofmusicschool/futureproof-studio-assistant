@@ -9,7 +9,7 @@ import type {
   Contacts,
   ContactStatus,
   ContactUpdate,
-} from "@/lib/contacts";
+} from "@/lib/contact-domain";
 import { callGoogleConnectorTool } from "@/lib/connectors/google-runtime";
 import {
   CONNECTOR_CATEGORY_HEADERS,

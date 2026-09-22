@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -16,7 +17,7 @@ export function GeminiKeyPanel() {
 
   useEffect(() => {
     mountedRef.current = true;
-    void fetch("/api/settings", { cache: "no-store" })
+    void clientFetch("/api/settings", { cache: "no-store" })
       .then(async (response) => {
         const body = (await response.json()) as SettingsState & { error?: string };
         if (!response.ok) throw new Error(body.error || "Could not read API key settings.");
@@ -42,7 +43,7 @@ export function GeminiKeyPanel() {
     setSaved(false);
     setError(null);
     try {
-      const response = await fetch("/api/settings", {
+      const response = await clientFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ geminiApiKey }),

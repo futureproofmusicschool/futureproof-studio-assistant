@@ -1,0 +1,17 @@
+name: Checks
+on: [push, pull_request]
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci --prefix app
+      - run: npm --prefix app run typecheck
+      - run: npm --prefix app test
+      - run: npm --prefix app run build
+      - run: python3 -m unittest discover -s ableton/tests

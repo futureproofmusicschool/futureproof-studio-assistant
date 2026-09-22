@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -142,8 +143,8 @@ export function GoogleAccountPanel() {
   const loadDirectGoogle = useCallback(async () => {
     try {
       const [statusResponse, configResponse] = await Promise.all([
-        fetch("/api/google/status", { cache: "no-store" }),
-        fetch("/api/google/config", { cache: "no-store" }),
+        clientFetch("/api/google/status", { cache: "no-store" }),
+        clientFetch("/api/google/config", { cache: "no-store" }),
       ]);
       const [nextStatus, nextConfig] = await Promise.all([
         responseBody<GoogleStatus>(statusResponse),
@@ -156,7 +157,7 @@ export function GoogleAccountPanel() {
 
       if (nextStatus.connected && nextStatus.services.drive) {
         try {
-          const workspaceResponse = await fetch("/api/google/workspace", { cache: "no-store" });
+          const workspaceResponse = await clientFetch("/api/google/workspace", { cache: "no-store" });
           const nextWorkspace = await responseBody<GoogleWorkspace>(workspaceResponse);
           if (mounted.current) setWorkspace(nextWorkspace);
         } catch (caught) {
@@ -180,7 +181,7 @@ export function GoogleAccountPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch("/api/connectors/status", { cache: "no-store" });
+      const response = await clientFetch("/api/connectors/status", { cache: "no-store" });
       const next = await responseBody<ConnectorStatus>(response);
       if (!mounted.current) return null;
       setConnector(next);
@@ -237,7 +238,7 @@ export function GoogleAccountPanel() {
     setBusyHost(true);
     setError(null);
     try {
-      const response = await fetch("/api/connectors/config", {
+      const response = await clientFetch("/api/connectors/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ selectedHost }),
@@ -259,7 +260,7 @@ export function GoogleAccountPanel() {
     setBusyApp(app);
     setError(null);
     try {
-      const response = await fetch("/api/connectors/connect", {
+      const response = await clientFetch("/api/connectors/connect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ app }),
@@ -283,7 +284,7 @@ export function GoogleAccountPanel() {
     setBusyHost(true);
     setError(null);
     try {
-      const response = await fetch("/api/google/config", {
+      const response = await clientFetch("/api/google/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -311,7 +312,7 @@ export function GoogleAccountPanel() {
     setBusyHost(true);
     setError(null);
     try {
-      const response = await fetch("/api/google/disconnect", { method: "POST" });
+      const response = await clientFetch("/api/google/disconnect", { method: "POST" });
       const body = await responseBody<{ warning?: string; status: GoogleStatus }>(response);
       if (mounted.current) {
         setGoogleStatus(body.status);

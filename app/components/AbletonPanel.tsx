@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -15,7 +16,7 @@ type DiscoveredHost = {
 
 async function fetchHealth(): Promise<Health | null> {
   try {
-    const response = await fetch("/api/ableton/health", { cache: "no-store" });
+    const response = await clientFetch("/api/ableton/health", { cache: "no-store" });
     if (!response.ok) return null;
     return (await response.json()) as Health;
   } catch {
@@ -73,7 +74,7 @@ export function AbletonPanel() {
     void fetchHealth().then((next) => {
       if (mountedRef.current) setHealth(next);
     });
-    void fetch("/api/ableton/install", { cache: "no-store" })
+    void clientFetch("/api/ableton/install", { cache: "no-store" })
       .then((response) => response.json())
       .then((body: InstallState) => {
         if (mountedRef.current) setInstallState(body);
@@ -90,7 +91,7 @@ export function AbletonPanel() {
     setScanning(true);
     setError(null);
     try {
-      const response = await fetch("/api/ableton/discover", { cache: "no-store" });
+      const response = await clientFetch("/api/ableton/discover", { cache: "no-store" });
       const body = (await response.json()) as { hosts?: DiscoveredHost[]; error?: string };
       if (!response.ok || !body.hosts) throw new Error(body.error || "Discovery failed.");
       if (mountedRef.current) setHosts(body.hosts);
@@ -104,7 +105,7 @@ export function AbletonPanel() {
   const choose = useCallback(async (host: string) => {
     setError(null);
     try {
-      const response = await fetch("/api/settings", {
+      const response = await clientFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ abletonHost: host }),
@@ -133,7 +134,7 @@ export function AbletonPanel() {
     setInstallError(null);
     setInstallMessage(null);
     try {
-      const response = await fetch("/api/ableton/install", {
+      const response = await clientFetch("/api/ableton/install", {
         method: "POST",
         headers: { "x-studio-assistant-action": "install-abletonosc" },
       });

@@ -1,3 +1,4 @@
+import { POD_HD_FUNCTION_DECLARATIONS, isPodHdTool, runPodHdTool } from "@/lib/pod-hd/tools";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -124,7 +125,7 @@ function resolveReadablePath(requested: string) {
   return null;
 }
 
-function collectReadableFiles(area?: string) {
+async function collectReadableFiles(area?: string) {
   const files: string[] = [];
   const wanted = area?.trim().toLowerCase();
 
@@ -139,18 +140,18 @@ function collectReadableFiles(area?: string) {
     const root = storedPath(entry);
     if (!fs.existsSync(root)) continue;
 
-    const walk = (directory: string) => {
-      for (const child of fs.readdirSync(directory, { withFileTypes: true })) {
+    const walk = async (directory: string): Promise<void> => {
+      for (const child of await fs.promises.readdir(directory, { withFileTypes: true })) {
         if (child.name.startsWith(".")) continue;
         const absolute = path.join(directory, child.name);
         if (child.isDirectory()) {
-          walk(absolute);
+          await walk(absolute);
         } else if (child.isFile() && READABLE_EXTENSIONS.has(path.extname(child.name))) {
           files.push(absolute);
         }
       }
     };
-    walk(root);
+    await walk(root);
   }
 
   return files;
@@ -183,7 +184,7 @@ function searchTerms(query: string) {
     .filter((term) => term.length > 2);
 }
 
-export function searchStudioFiles(query: unknown, area?: unknown): ToolResult {
+export async function searchStudioFiles(query: unknown, area?: unknown): Promise<ToolResult> {
   const text = typeof query === "string" ? query.trim() : "";
   if (!text) return { error: "search_studio_files needs a query." };
 
@@ -196,12 +197,12 @@ export function searchStudioFiles(query: unknown, area?: unknown): ToolResult {
   const phrase = text.toLowerCase();
   const hits: { path: string; snippet: string }[] = [];
 
-  for (const absolute of collectReadableFiles(wantedArea)) {
+  for (const absolute of await collectReadableFiles(wantedArea)) {
     if (hits.length >= MAX_HITS) break;
 
     let contents: string;
     try {
-      contents = fs.readFileSync(absolute, "utf8");
+      contents = await fs.promises.readFile(absolute, "utf8");
     } catch {
       continue;
     }
@@ -325,6 +326,7 @@ export async function runStudioTool(
   args: Record<string, unknown>,
   context?: ToolExecutionContext,
 ): Promise<ToolResult> {
+  if (isPodHdTool(name)) return runPodHdTool(name, args);
   if (isAbletonTool(name)) return runAbletonTool(name, args);
 
   switch (name) {
@@ -716,5 +718,6 @@ export const FUNCTION_DECLARATIONS = [
     },
   },
   // v2: board/contacts mutation tools
+  ...POD_HD_FUNCTION_DECLARATIONS,
   ...ABLETON_FUNCTION_DECLARATIONS,
 ];

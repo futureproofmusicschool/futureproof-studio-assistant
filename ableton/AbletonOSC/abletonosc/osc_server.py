@@ -85,6 +85,24 @@ class OSCServer:
             self.logger.error("AbletonOSC: OSC build error: %s" % (traceback.format_exc()))
 
     def process_message(self, message, remote_addr):
+        # Correlated queries let clients safely overlap independent reads and
+        # discard replies that arrive after their original request timed out.
+        response_addr = (remote_addr[0], self._response_port)
+        if message.address == "/studio/capabilities":
+            self.send("/studio/capabilities", ("request-id-v1",), response_addr)
+            return
+        if message.address == "/studio/query":
+            if len(message.params) < 2:
+                return
+            token, address = message.params[:2]
+            try:
+                if "/get/" not in address or address not in self._callbacks:
+                    raise ValueError("Only registered read queries are supported")
+                result = self._callbacks[address](message.params[2:])
+                self.send("/studio/reply", (token, address, 0) + tuple(result or ()), response_addr)
+            except Exception as error:
+                self.send("/studio/reply", (token, address, 1, str(error)), response_addr)
+            return
         if message.address in self._callbacks:
             callback = self._callbacks[message.address]
             rv = callback(message.params)

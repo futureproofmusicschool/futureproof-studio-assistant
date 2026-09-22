@@ -70,12 +70,14 @@ export function midiToNoteName(pitch: number): string {
 
 async function getLiveOverview(): Promise<unknown> {
   const version = await ensureLive();
-  const [tempo] = await oscQuery("/live/song/get/tempo");
-  const [sigNum] = await oscQuery("/live/song/get/signature_numerator");
-  const [sigDen] = await oscQuery("/live/song/get/signature_denominator");
-  const [playing] = await oscQuery("/live/song/get/is_playing");
-  const [numTracks] = await oscQuery("/live/song/get/num_tracks");
-  const names = await oscQuery("/live/song/get/track_names");
+  const [[tempo], [sigNum], [sigDen], [playing], [numTracks], names] = await Promise.all([
+    oscQuery("/live/song/get/tempo"),
+    oscQuery("/live/song/get/signature_numerator"),
+    oscQuery("/live/song/get/signature_denominator"),
+    oscQuery("/live/song/get/is_playing"),
+    oscQuery("/live/song/get/num_tracks"),
+    oscQuery("/live/song/get/track_names"),
+  ]);
   const data = await oscQuery("/live/song/get/track_data", [
     0,
     -1,
@@ -111,18 +113,22 @@ async function getLiveOverview(): Promise<unknown> {
 async function getLiveTrack(args: Record<string, unknown>): Promise<unknown> {
   await ensureLive();
   const index = requireInt(args, "track_index");
-  const [, name] = await oscQuery("/live/track/get/name", [index]);
-  const [, canBeArmed] = await oscQuery("/live/track/get/can_be_armed", [index]);
-  const [, muted] = await oscQuery("/live/track/get/mute", [index]);
-  const [, soloed] = await oscQuery("/live/track/get/solo", [index]);
-  const [, volume] = await oscQuery("/live/track/get/volume", [index]);
-  const [, pan] = await oscQuery("/live/track/get/panning", [index]);
+  const [[, name], [, canBeArmed], [, muted], [, soloed], [, volume], [, pan]] = await Promise.all([
+    oscQuery("/live/track/get/name", [index]),
+    oscQuery("/live/track/get/can_be_armed", [index]),
+    oscQuery("/live/track/get/mute", [index]),
+    oscQuery("/live/track/get/solo", [index]),
+    oscQuery("/live/track/get/volume", [index]),
+    oscQuery("/live/track/get/panning", [index]),
+  ]);
   const armed = bool(canBeArmed) ? bool((await oscQuery("/live/track/get/arm", [index]))[1]) : false;
 
-  const [, ...deviceNames] = await oscQuery("/live/track/get/devices/name", [index]);
-  const [, ...deviceClasses] = await oscQuery("/live/track/get/devices/class_name", [index]);
-  const [, ...clipNames] = await oscQuery("/live/track/get/clips/name", [index]);
-  const [, ...clipLengths] = await oscQuery("/live/track/get/clips/length", [index]);
+  const [[, ...deviceNames], [, ...deviceClasses], [, ...clipNames], [, ...clipLengths]] = await Promise.all([
+    oscQuery("/live/track/get/devices/name", [index]),
+    oscQuery("/live/track/get/devices/class_name", [index]),
+    oscQuery("/live/track/get/clips/name", [index]),
+    oscQuery("/live/track/get/clips/length", [index]),
+  ]);
 
   const clips = clipNames
     .map((clipName, clipIndex) => ({ clipIndex, name: str(clipName), lengthBeats: clipLengths[clipIndex] }))
@@ -202,8 +208,10 @@ async function getLiveClipNotes(args: Record<string, unknown>): Promise<unknown>
 
 async function getLiveArrangement(): Promise<unknown> {
   await ensureLive();
-  const names = await oscQuery("/live/song/get/track_names");
-  const [songLength] = await oscQuery("/live/song/get/song_length");
+  const [names, [songLength]] = await Promise.all([
+    oscQuery("/live/song/get/track_names"),
+    oscQuery("/live/song/get/song_length"),
+  ]);
   const tracks = [];
 
   for (let index = 0; index < names.length; index += 1) {
@@ -232,10 +240,12 @@ async function getLiveDeviceParameters(args: Record<string, unknown>): Promise<u
   await ensureLive();
   const track = requireInt(args, "track_index");
   const device = requireInt(args, "device_index");
-  const [, , ...names] = await oscQuery("/live/device/get/parameters/name", [track, device], { timeoutMs: 3000 });
-  const [, , ...values] = await oscQuery("/live/device/get/parameters/value", [track, device], { timeoutMs: 3000 });
-  const [, , ...mins] = await oscQuery("/live/device/get/parameters/min", [track, device], { timeoutMs: 3000 });
-  const [, , ...maxes] = await oscQuery("/live/device/get/parameters/max", [track, device], { timeoutMs: 3000 });
+  const [[, , ...names], [, , ...values], [, , ...mins], [, , ...maxes]] = await Promise.all([
+    oscQuery("/live/device/get/parameters/name", [track, device], { timeoutMs: 3000 }),
+    oscQuery("/live/device/get/parameters/value", [track, device], { timeoutMs: 3000 }),
+    oscQuery("/live/device/get/parameters/min", [track, device], { timeoutMs: 3000 }),
+    oscQuery("/live/device/get/parameters/max", [track, device], { timeoutMs: 3000 }),
+  ]);
 
   return {
     trackIndex: track,
@@ -324,9 +334,11 @@ async function liveTransport(args: Record<string, unknown>): Promise<unknown> {
       throw new Error(`Unknown transport action "${action}".`);
   }
 
-  const [tempo] = await oscQuery("/live/song/get/tempo");
-  const [playing] = await oscQuery("/live/song/get/is_playing");
-  const [position] = await oscQuery("/live/song/get/current_song_time");
+  const [[tempo], [playing], [position]] = await Promise.all([
+    oscQuery("/live/song/get/tempo"),
+    oscQuery("/live/song/get/is_playing"),
+    oscQuery("/live/song/get/current_song_time"),
+  ]);
   return { did: action, playing: bool(playing), tempo: num(tempo), positionBeats: num(position) };
 }
 
@@ -533,9 +545,11 @@ async function composeMidiPart(args: Record<string, unknown>): Promise<unknown> 
     if (!bool(isMidi)) throw new Error(`Track ${track} clip ${clip} is an audio clip; MIDI can't be written to it.`);
   }
 
-  const [tempo] = await oscQuery("/live/song/get/tempo");
-  const [sigNum] = await oscQuery("/live/song/get/signature_numerator");
-  const [sigDen] = await oscQuery("/live/song/get/signature_denominator");
+  const [[tempo], [sigNum], [sigDen]] = await Promise.all([
+    oscQuery("/live/song/get/tempo"),
+    oscQuery("/live/song/get/signature_numerator"),
+    oscQuery("/live/song/get/signature_denominator"),
+  ]);
 
   // Existing notes are context for a revision, not for a fresh part.
   let existingNotes: ComposedNote[] | undefined;
@@ -617,8 +631,10 @@ async function setLiveDeviceParameter(args: Record<string, unknown>): Promise<un
   const value = requireNumber(args, "value");
 
   await oscSend("/live/device/set/parameter/value", [track, device, parameter, value]);
-  const [, , , display] = await oscQuery("/live/device/get/parameter/value_string", [track, device, parameter]);
-  const [, , , name] = await oscQuery("/live/device/get/parameter/name", [track, device, parameter]);
+  const [[, , , display], [, , , name]] = await Promise.all([
+    oscQuery("/live/device/get/parameter/value_string", [track, device, parameter]),
+    oscQuery("/live/device/get/parameter/name", [track, device, parameter]),
+  ]);
   return { trackIndex: track, deviceIndex: device, parameter: str(name), nowShowing: str(display) };
 }
 

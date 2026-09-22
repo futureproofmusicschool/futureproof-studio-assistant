@@ -45,6 +45,11 @@ if [ ! -d app/node_modules ]; then
   npm install --prefix app
 fi
 
+# Build before starting if source or dependencies have changed.
+if ! node --input-type=module -e 'import {resolveProductionBuild} from "./desktop/production-build.mjs"; resolveProductionBuild("app");' 2>/dev/null; then
+  npm run build --prefix app
+fi
+
 echo "Starting the studio assistant on port $PORT..."
 echo "Keep this window open while you use it; close it (Ctrl+C) to stop."
 
@@ -59,4 +64,4 @@ echo "Keep this window open while you use it; close it (Ctrl+C) to stop."
   done
 ) &
 
-exec npm run dev --prefix app
+exec npm start --prefix app

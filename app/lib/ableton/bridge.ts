@@ -1,3 +1,7 @@
+import crypto from "node:crypto";
+import { SingleFlight } from "../single-flight";
+import { writeJson } from "../runtime/files.js";
+import { replyPrefix, matchesPrefix } from "./replies";
 import dgram from "node:dgram";
 import dns from "node:dns/promises";
 import fs from "node:fs";
@@ -27,6 +31,7 @@ type Waiter = {
   resolve: (values: unknown[]) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  prefix: unknown[];
 };
 
 type BridgeState = {
@@ -64,12 +69,14 @@ function getState(): BridgeState {
 
     const key = `${rinfo.address}|${message.address}`;
     const queue = state.waiters.get(key);
-    const waiter = queue?.shift();
+    const values = message.args.map((arg) => arg.value);
+    const index = queue?.findIndex((entry) => matchesPrefix(entry.prefix, values)) ?? -1;
+    const waiter = index >= 0 ? queue?.splice(index, 1)[0] : undefined;
     if (!waiter) return;
     if (queue && queue.length === 0) state.waiters.delete(key);
 
     clearTimeout(waiter.timer);
-    waiter.resolve(message.args.map((arg) => arg.value));
+    waiter.resolve(values);
   });
 
   globalStore.__abletonBridge = state;
@@ -120,13 +127,24 @@ function rememberHost(host: string, ip: string): void {
   if (cache[host] === ip) return;
   try {
     ensureDataDirectory();
-    fs.writeFileSync(dataPath(HOST_CACHE_FILE), `${JSON.stringify({ ...cache, [host]: ip }, null, 2)}\n`);
+    writeJson(dataPath(HOST_CACHE_FILE), { ...cache, [host]: ip });
   } catch {
     // A read-only checkout must not break Ableton control.
   }
 }
 
-async function resolveHost(host: string): Promise<string> {
+const resolvedHosts = new Map<string, { until: number; ip: string }>();
+const resolutions = new SingleFlight<string>();
+function resolveHost(host: string): Promise<string> {
+  const cached = resolvedHosts.get(host);
+  if (cached && cached.until > Date.now()) return Promise.resolve(cached.ip);
+  return resolutions.run(host, async () => {
+    const ip = await lookupHost(host);
+    resolvedHosts.set(host, { until: Date.now() + 30_000, ip });
+    return ip;
+  });
+}
+async function lookupHost(host: string): Promise<string> {
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return host;
   try {
     const { address } = await dns.lookup(host, { family: 4 });
@@ -161,45 +179,82 @@ export async function oscSend(
   await state.ready;
   const ip = await resolveHost(host);
   const packet = writePacket({ address, args: toOscArgs(args) }, { metadata: true });
-  state.socket.send(packet, OSC_SEND_PORT, ip);
+  await new Promise<void>((resolve, reject) => state.socket.send(packet, OSC_SEND_PORT, ip, (error) => error ? reject(error) : resolve()));
 }
 
 /** Send and wait for the echoed-address reply. Times out with a readable error. */
-export async function oscQuery(
+async function legacyQuery(
   address: string,
   args: (string | number | boolean)[] = [],
-  options: { host?: string; timeoutMs?: number } = {},
+  options: { host?: string; timeoutMs?: number; requestId?: string } = {},
 ): Promise<unknown[]> {
   const host = options.host ?? currentAbletonHost();
   const timeoutMs = options.timeoutMs ?? QUERY_TIMEOUT_MS;
   const state = getState();
   await state.ready;
   const ip = await resolveHost(host);
-  const key = `${ip}|${address}`;
+  const key = `${ip}|${options.requestId ? "/studio/reply" : address}`;
 
   return new Promise<unknown[]>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const remove = () => {
       const queue = state.waiters.get(key);
       if (queue) {
         const index = queue.findIndex((entry) => entry.timer === timer);
         if (index >= 0) queue.splice(index, 1);
         if (queue.length === 0) state.waiters.delete(key);
       }
-      reject(new Error(notReachableMessage(host)));
-    }, timeoutMs);
+    };
+    const timer = setTimeout(() => { remove(); resolvedHosts.delete(host); reject(new Error(notReachableMessage(host))); }, timeoutMs);
 
     const queue = state.waiters.get(key) ?? [];
-    queue.push({ resolve, reject, timer });
+    queue.push({ resolve, reject, timer, prefix: options.requestId ? [options.requestId] : replyPrefix(address, args) });
     state.waiters.set(key, queue);
 
     const packet = writePacket({ address, args: toOscArgs(args) }, { metadata: true });
     state.socket.send(packet, OSC_SEND_PORT, ip, (error) => {
       if (error) {
         clearTimeout(timer);
+        remove();
         reject(new Error(notReachableMessage(host)));
       }
     });
   });
+}
+
+const queries = new SingleFlight<unknown[]>();
+const handshakes = new SingleFlight<string>();
+const protocols = new Map<string, { until: number; correlated: boolean }>();
+const protocolProbes = new SingleFlight<{ until: number; correlated: boolean }>();
+const legacyTails = new Map<string, Promise<unknown>>();
+export function oscQuery(address: string, args: (string | number | boolean)[] = [], options: { host?: string; timeoutMs?: number } = {}): Promise<unknown[]> {
+  const host = options.host ?? currentAbletonHost();
+  const read = address.includes("/get/");
+  const work = async () => {
+    let protocol = protocols.get(host);
+    if (!protocol || protocol.until <= Date.now()) {
+      protocol = await protocolProbes.run(host, async () => {
+      let correlated = false;
+      try { correlated = (await legacyQuery("/studio/capabilities", [], { host, timeoutMs: 300 }))[0] === "request-id-v1"; } catch { /* Older installed script. */ }
+      const result = { until: Date.now() + 60_000, correlated };
+      protocols.set(host, result);
+      return result;
+      });
+    }
+    if (read && protocol.correlated) {
+      const requestId = crypto.randomUUID();
+      const response = await legacyQuery("/studio/query", [requestId, address, ...args], { ...options, host, requestId });
+      if (response[2] !== 0) throw new Error(String(response[3] || "Ableton query failed."));
+      return response.slice(3);
+    }
+    // Old scripts cannot echo request IDs. Keep each address family ordered.
+    const key = `${host}:${address}`;
+    const before = legacyTails.get(key) ?? Promise.resolve();
+    const pending = before.then(() => legacyQuery(address, args, { ...options, host }), () => legacyQuery(address, args, { ...options, host }));
+    legacyTails.set(key, pending);
+    void pending.finally(() => { if (legacyTails.get(key) === pending) legacyTails.delete(key); }).catch(() => {});
+    return pending;
+  };
+  return read ? queries.run(`${host}:${address}:${JSON.stringify(args)}`, work) : work();
 }
 
 /**
@@ -212,10 +267,12 @@ export async function ensureLive(host = currentAbletonHost()): Promise<string> {
   const cached = state.handshakes.get(host);
   if (cached && Date.now() - cached.at < HANDSHAKE_TTL_MS) return cached.version;
 
-  const values = await oscQuery("/live/application/get/version", [], { host, timeoutMs: 900 });
-  const version = values.map(String).join(".");
-  state.handshakes.set(host, { version, at: Date.now() });
-  return version;
+  return handshakes.run(host, async () => {
+    const values = await oscQuery("/live/application/get/version", [], { host, timeoutMs: 900 });
+    const version = values.map(String).join(".");
+    state.handshakes.set(host, { version, at: Date.now() });
+    return version;
+  });
 }
 
 /** Non-throwing reachability check for the health endpoint and discovery. */

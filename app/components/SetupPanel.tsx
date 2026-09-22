@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useEffect, useState } from "react";
 
@@ -15,7 +16,7 @@ export function SetupPanel() {
 
   useEffect(() => {
     let active = true;
-    void fetch("/api/settings", { cache: "no-store" })
+    void clientFetch("/api/settings?scope=setup", { cache: "no-store" })
       .then((response) => response.json())
       .then((body: { hasGeminiKey?: boolean }) => {
         if (active) setHasKey(Boolean(body.hasGeminiKey));
@@ -35,7 +36,7 @@ export function SetupPanel() {
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/settings", {
+      const response = await clientFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ geminiApiKey: draft.trim() }),

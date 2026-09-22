@@ -20,8 +20,8 @@ import {
   plainExcerpt,
   primaryTab,
   renderMarkdownForGoogleDocs,
-} from "@/lib/documents";
-import { callGoogleConnectorTool } from "@/lib/connectors/google-runtime";
+} from "@/lib/document-format";
+import { callGoogleConnectorTool, connectorCacheVersion, connectorAccountVersion } from "@/lib/connectors/google-runtime";
 import {
   connectorCreatedFile,
   connectorDriveFiles,
@@ -96,7 +96,20 @@ function saveOperation(host: AgentConnectorHost, operationId: string, value: str
   }));
 }
 
-async function listManagedFiles(host: AgentConnectorHost, folderUrl: string) {
+const folderIndexes = new Map<string, { until: number; value: ReturnType<typeof fetchManagedFiles> }>();
+function listManagedFiles(host: AgentConnectorHost, folderUrl: string, fresh = false) {
+  const key = `${connectorAccountVersion()}:${connectorCacheVersion()}:${host}:${folderUrl}`;
+  const cached = folderIndexes.get(key);
+  if (!fresh && cached && cached.until > Date.now()) return cached.value;
+  const value = fetchManagedFiles(host, folderUrl);
+  folderIndexes.set(key, { until: Date.now() + 2000, value });
+  if (folderIndexes.size > 16) folderIndexes.delete(folderIndexes.keys().next().value!);
+  void value.catch(() => { if (folderIndexes.get(key)?.value === value) folderIndexes.delete(key); });
+  return value;
+}
+const bodyCache = new Map<string, StudioDocument>();
+
+async function fetchManagedFiles(host: AgentConnectorHost, folderUrl: string) {
   const result = await callGoogleConnectorTool(host, "drive", "google_drive_list_folder", {
     url: folderUrl,
     top_k: 1000,
@@ -120,12 +133,15 @@ async function readByFile(
   host: AgentConnectorHost,
   file: ReturnType<typeof connectorDriveFiles>[number],
 ): Promise<StudioDocument> {
+  const key = `${connectorAccountVersion()}:${connectorCacheVersion()}:${host}:${readConnectorHostState(host).workspace?.profileEmail}:${file.id}:${file.modifiedTime}`;
+  const cached = file.modifiedTime ? bodyCache.get(key) : undefined;
+  if (cached) return cached;
   const native = await documentResource(host, file.id);
   const body = documentText(native);
   const stored = recordFor(host, file.id);
   const createdAt = iso(file.createdTime, stored?.createdAt);
   const updatedAt = iso(file.modifiedTime, stored?.updatedAt ?? createdAt);
-  return {
+  const document: StudioDocument = {
     id: file.id,
     slug: file.id,
     title: file.name || native.title || "Untitled document",
@@ -137,11 +153,14 @@ async function readByFile(
     body,
     revisionId: typeof native.revisionId === "string" ? native.revisionId : null,
   };
+  if (file.modifiedTime) bodyCache.set(key, document);
+  if (bodyCache.size > 64) bodyCache.delete(bodyCache.keys().next().value!);
+  return document;
 }
 
 export async function listConnectorDocuments(options: { includeExcerpts?: boolean } = {}): Promise<DocumentSummary[]> {
   const { host, workspace } = await ensureConnectorWorkspace();
-  const files = await listManagedFiles(host, workspace.folderUrl);
+  const files = await listManagedFiles(host, workspace.folderUrl, true);
   if (options.includeExcerpts === false) {
     return files
       .map((file) => {

@@ -1,3 +1,4 @@
+import { extractPdf } from "./pdf-text";
 import fs from "node:fs";
 import path from "node:path";
 import { dataPath } from "@/lib/paths";
@@ -85,20 +86,14 @@ async function extractText(absolute: string): Promise<string> {
     throw new Error(`${path.basename(absolute)} is over ${MAX_DOC_BYTES / 1024 / 1024}MB; split it before shelving.`);
   }
 
-  if (PLAIN_TEXT.has(ext)) return fs.readFileSync(absolute, "utf8");
+  if (PLAIN_TEXT.has(ext)) return fs.promises.readFile(absolute, "utf8");
 
   const cachePath = path.join(CACHE_DIR, `${path.basename(absolute)}.${stat.mtimeMs}-${stat.size}.txt`);
-  if (fs.existsSync(cachePath)) return fs.readFileSync(cachePath, "utf8");
+  if (fs.existsSync(cachePath)) return fs.promises.readFile(cachePath, "utf8");
 
   let text: string;
   if (ext === ".pdf") {
-    const { PDFParse } = await import("pdf-parse");
-    const parser = new PDFParse({ data: fs.readFileSync(absolute) });
-    try {
-      text = (await parser.getText()).text ?? "";
-    } finally {
-      await parser.destroy();
-    }
+    text = (await extractPdf(await fs.promises.readFile(absolute))).text;
   } else {
     const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ path: absolute });
@@ -181,8 +176,19 @@ function sectionize(text: string): Section[] {
   return sections;
 }
 
+const searchableSections = new WeakMap<Section, { body: string; heading: string }>();
+const sectionCache = new Map<string, { signature: string; value: Promise<Section[]> }>();
 async function loadSections(doc: string): Promise<Section[]> {
-  return sectionize(await extractText(path.join(REFERENCE_DIR, doc)));
+  const absolute = path.join(REFERENCE_DIR, doc);
+  const stat = await fs.promises.stat(absolute);
+  const signature = `${stat.mtimeMs}:${stat.size}`;
+  const cached = sectionCache.get(doc);
+  if (cached?.signature === signature) return cached.value;
+  const value = extractText(absolute).then(sectionize);
+  sectionCache.set(doc, { signature, value });
+  if (sectionCache.size > 32) sectionCache.delete(sectionCache.keys().next().value!);
+  void value.catch(() => { if (sectionCache.get(doc)?.value === value) sectionCache.delete(doc); });
+  return value;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +216,12 @@ export async function searchReference(query: string, docFilter?: string): Promis
   for (const doc of docs) {
     const sections = await loadSections(doc);
     sections.forEach((section, index) => {
-      const haystack = `${section.heading}\n${section.body}`.toLowerCase();
+      let indexed = searchableSections.get(section);
+      if (!indexed) {
+        indexed = { body: `${section.heading}\n${section.body}`.toLowerCase(), heading: section.heading.toLowerCase() };
+        searchableSections.set(section, indexed);
+      }
+      const haystack = indexed.body;
       let score = 0;
       let firstTerm = "";
       for (const term of wanted) {
@@ -219,7 +230,7 @@ export async function searchReference(query: string, docFilter?: string): Promis
         score += Math.min(count, 5);
       }
       if (phrase.length > 5 && haystack.includes(phrase)) score += 10;
-      if (section.heading.toLowerCase().includes(phrase) && phrase.length > 3) score += 6;
+      if (indexed.heading.includes(phrase) && phrase.length > 3) score += 6;
       if (score > 0) {
         hits.push({
           doc,

@@ -29,7 +29,8 @@ async function state() {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  if (new URL(request.url).searchParams.get("scope") === "setup") return NextResponse.json({ hasGeminiKey: readGeminiApiKey().length > 0 });
   return NextResponse.json(await state());
 }
 

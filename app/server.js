@@ -28,16 +28,8 @@ const ALLOWED_HOSTS = new Set([`${HOST}:${PORT}`, `localhost:${PORT}`, `[::1]:${
 const ALLOWED_ORIGINS = new Set([APP_ORIGIN, `http://localhost:${PORT}`, `http://[::1]:${PORT}`]);
 const dev = process.env.NODE_ENV !== "production";
 const REPO_ROOT = path.join(__dirname, "..");
-const DATA_ROOT = process.env.STUDIO_ASSISTANT_DATA_DIR?.trim()
-  ? path.resolve(process.env.STUDIO_ASSISTANT_DATA_DIR.trim())
-  : process.platform === "darwin"
-    ? path.join(os.homedir(), "Library", "Application Support", "Futureproof Studio Assistant")
-    : process.platform === "win32"
-      ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "Futureproof Studio Assistant")
-      : path.join(
-          process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share"),
-          "futureproof-studio-assistant",
-        );
+const { defaultDataRoot, parseEnv } = require("./lib/runtime/config.js");
+const DATA_ROOT = defaultDataRoot();
 const CONTACT_LOCK_DIR = path.join(DATA_ROOT, "google", "contact-locks");
 const PROCESS_STARTED_AT = Date.now() - process.uptime() * 1000;
 const ENV_PATH = path.join(DATA_ROOT, ".env");
@@ -234,32 +226,6 @@ function cleanupDeadContactLocks() {
   }
 }
 
-function parseEnv(source) {
-  const values = {};
-
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    } else {
-      value = value.replace(/\s+#.*$/, "").trim();
-    }
-    values[match[1]] = value;
-  }
-
-  return values;
-}
-
 function loadApiKey() {
   try {
     return parseEnv(fs.readFileSync(ENV_PATH, "utf8")).GEMINI_API_KEY || "";
@@ -385,6 +351,7 @@ function parseFrame(data) {
   }
 }
 
+const activeRecorders = new Set();
 function relay(browser) {
   const apiKey = loadApiKey();
 
@@ -397,9 +364,15 @@ function relay(browser) {
   const upstream = new WebSocket(`${GEMINI_URL}?key=${encodeURIComponent(apiKey)}`);
   const pending = [];
   const recorder = createVoiceRecorder();
+  activeRecorders.add(recorder);
 
   browser.on("message", (data, isBinary) => {
     const frame = parseFrame(data);
+    if (frame?.studioEnd === true) {
+      recorder.flush();
+      browser.send(JSON.stringify({ relayFlushed: true }));
+      return;
+    }
     // Audio chunks are the overwhelming majority of frames; skip parsing them.
     if (frame && !frame.realtimeInput?.audio) recorder.fromBrowser(frame);
 
@@ -414,6 +387,7 @@ function relay(browser) {
 
   browser.on("close", () => {
     recorder.flush();
+    activeRecorders.delete(recorder);
     if (upstream.readyState < WebSocket.CLOSING) upstream.close(1000, "Browser disconnected");
   });
 
@@ -478,6 +452,16 @@ function scheduleFiling() {
   // A little after boot, so the first request is not competing with startup.
   setTimeout(runFiling, 30_000).unref?.();
   setInterval(runFiling, 60 * 60 * 1000).unref?.();
+  let researchRunning = false;
+  const finalizeResearch = async () => {
+    if (researchRunning) return;
+    researchRunning = true;
+    try { await fetch(`${APP_ORIGIN}/api/chat/research`, { method: "POST", signal: AbortSignal.timeout(300_000) }); }
+    catch { console.error("Research finalization will retry on the next check."); }
+    finally { researchRunning = false; }
+  };
+  setTimeout(finalizeResearch, 35_000).unref?.();
+  setInterval(finalizeResearch, 60_000).unref?.();
 }
 
 async function main() {
@@ -551,6 +535,17 @@ async function main() {
     },
   });
 
+  let shuttingDown = false;
+  const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    for (const recorder of activeRecorders) recorder.flush();
+    for (const socket of talkSockets.clients) socket.close(1001, "Server stopping");
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
   console.log(`The app is listening at ${APP_ORIGIN}`);
   scheduleFiling();
 }

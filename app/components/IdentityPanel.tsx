@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -22,7 +23,7 @@ export function IdentityPanel() {
 
   useEffect(() => {
     mountedRef.current = true;
-    void fetch("/api/settings", { cache: "no-store" })
+    void clientFetch("/api/settings", { cache: "no-store" })
       .then((response) => response.json())
       .then((body: { assistantName?: string; userName?: string }) => {
         if (!mountedRef.current) return;
@@ -42,7 +43,7 @@ export function IdentityPanel() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/settings", {
+      const response = await clientFetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assistantName: assistantName.trim(), userName: userName.trim() }),

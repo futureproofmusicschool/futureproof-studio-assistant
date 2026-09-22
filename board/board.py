@@ -11,42 +11,29 @@ List ids come from board.json (workflow lists like today, in-progress, next, don
 """
 import json
 import os
-import platform
 import sys
-import secrets
-import datetime
-import pathlib
 
 
-def data_root():
-    override = os.environ.get("STUDIO_ASSISTANT_DATA_DIR", "").strip()
-    if override:
-        return pathlib.Path(override).expanduser().resolve()
-    if platform.system() == "Darwin":
-        return pathlib.Path.home() / "Library" / "Application Support" / "Futureproof Studio Assistant"
-    if platform.system() == "Windows":
-        return pathlib.Path(os.environ.get("APPDATA", pathlib.Path.home() / "AppData" / "Roaming")) / "Futureproof Studio Assistant"
-    return pathlib.Path(os.environ.get("XDG_DATA_HOME", pathlib.Path.home() / ".local" / "share")) / "futureproof-studio-assistant"
+import urllib.request
+import urllib.error
 
+API_BASE = os.environ.get("STUDIO_ASSISTANT_URL", "http://localhost:" + os.environ.get("PORT", "3017")).rstrip("/")
 
-DATA_FILE = data_root() / "board" / "board.json"
-
+def request(method, route, payload=None):
+    body = None if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(API_BASE + route, data=body, method=method, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        try: message = json.loads(error.read()).get("error", str(error))
+        except ValueError: message = str(error)
+        sys.exit(message)
+    except urllib.error.URLError:
+        sys.exit("Start Studio Assistant before using the board helper.")
 
 def load():
-    return json.loads(DATA_FILE.read_text())
-
-
-def save(b):
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(b, indent=1, ensure_ascii=False) + "\n")
-
-
-def now():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
-def next_pos(b, lid):
-    return max((c["pos"] for c in b["cards"] if c["list"] == lid), default=0) + 1
+    return request("GET", "/api/board")
 
 
 def main(argv):
@@ -78,18 +65,7 @@ def main(argv):
         due = None
         if "--due" in args:
             due = args[args.index("--due") + 1] + "T00:00:00.000Z"
-        card = {
-            "id": "c_" + secrets.token_hex(4),
-            "title": title,
-            "desc": desc,
-            "list": lid,
-            "pos": next_pos(b, lid),
-            "due": due,
-            "createdAt": now(),
-            "updatedAt": now(),
-        }
-        b["cards"].append(card)
-        save(b)
+        card = request("POST", "/api/board/cards", {"title": title, "list": lid, "desc": desc, "due": due})
         print(f"added {card['id']} to {lid}")
 
     elif cmd == "move":
@@ -97,10 +73,7 @@ def main(argv):
         pos = int(args[args.index("--pos") + 1]) if "--pos" in args else None
         for c in b["cards"]:
             if c["id"] == cid:
-                c["list"] = lid
-                c["pos"] = pos if pos is not None else next_pos(b, lid)
-                c["updatedAt"] = now()
-                save(b)
+                request("PATCH", f"/api/board/cards/{cid}", {"list": lid, **({"pos": pos} if pos is not None else {})})
                 print(f"moved {cid} -> {lid}")
                 return
         sys.exit(f"no card {cid}")
@@ -110,7 +83,7 @@ def main(argv):
         b["cards"] = [c for c in b["cards"] if c["id"] != args[0]]
         if len(b["cards"]) == before:
             sys.exit(f"no card {args[0]}")
-        save(b)
+        request("DELETE", f"/api/board/cards/{args[0]}")
         print(f"removed {args[0]}")
 
     else:

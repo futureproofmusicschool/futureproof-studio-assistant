@@ -1,3 +1,6 @@
+import { boundedFetch } from "./request-deadline";
+import crypto from "node:crypto";
+import { atomicWrite, readJson, writeJson } from "./runtime/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { readGeminiApiKey } from "@/lib/env";
@@ -112,7 +115,7 @@ export function saveMemoryNote(args: { type: string; title: string; body: string
   ].join("\n");
 
   const target = uniquePath(DIRECTORY_FOR[type], filename);
-  fs.writeFileSync(target, `${frontmatter}# ${title}\n\n${body}\n`, "utf8");
+  atomicWrite(target, `${frontmatter}# ${title}\n\n${body}\n`);
   return { path: toDataRelative(target), type };
 }
 
@@ -193,7 +196,7 @@ async function callFlash(prompt: string): Promise<FilingPayload> {
   const key = readGeminiApiKey();
   if (!key) throw new Error("No Gemini API key is saved, so the transcript could not be filed.");
 
-  const response = await fetch(
+  const response = await boundedFetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${BOOKKEEPING_MODEL}:generateContent`,
     {
       method: "POST",
@@ -227,7 +230,7 @@ async function callFlash(prompt: string): Promise<FilingPayload> {
  * Reads a saved transcript and files it. Throws on failure; callers treat that
  * as "not filed" and never let it cost the artist the transcript itself.
  */
-export async function fileTranscript(transcriptRelativePath: string): Promise<FiledResult> {
+export async function fileTranscript(transcriptRelativePath: string, operationId?: string): Promise<FiledResult> {
   const absolute = path.resolve(DATA_ROOT, transcriptRelativePath);
   const transcriptRoots = [
     { root: path.join(DATA_ROOT, "conversation", "transcripts"), kind: "studio" },
@@ -243,7 +246,12 @@ export async function fileTranscript(transcriptRelativePath: string): Promise<Fi
   }
 
   const transcript = fs.readFileSync(absolute, "utf8").slice(0, MAX_TRANSCRIPT_BYTES);
-  const payload = await callFlash(buildFilingPrompt(transcript, matched.kind));
+  const receiptPath = operationId ? path.join(DATA_ROOT, "conversation", "filing-receipts", `${crypto.createHash("sha256").update(operationId).digest("hex")}.json`) : null;
+  const receipt = receiptPath ? readJson<{ payload: FilingPayload; result?: FiledResult } | null>(receiptPath, null) : null;
+  if (receipt?.result) return receipt.result;
+  const payload = receipt?.payload ?? await callFlash(buildFilingPrompt(transcript, matched.kind));
+  if (receiptPath && !receipt) writeJson(receiptPath, { payload });
+  const operationSuffix = operationId ? `-${crypto.createHash("sha256").update(operationId).digest("hex").slice(0, 20)}` : "";
 
   const now = new Date();
   const result: FiledResult = { episodic: null, semantic: [], workingSelfUpdated: false };
@@ -265,15 +273,15 @@ export async function fileTranscript(transcriptRelativePath: string): Promise<Fi
       "",
     ].join("\n");
 
-    const target = uniquePath(EPISODIC_DIR, `${dayStamp(now)}-${slugify(payload.episodic.title)}`);
-    fs.writeFileSync(target, `${frontmatter}# ${payload.episodic.title}\n\n${payload.episodic.body.trim()}\n`, "utf8");
+    const target = operationId ? path.join(EPISODIC_DIR, `filed${operationSuffix}.md`) : uniquePath(EPISODIC_DIR, `${dayStamp(now)}-${slugify(payload.episodic.title)}`);
+    atomicWrite(target, `${frontmatter}# ${payload.episodic.title}\n\n${payload.episodic.body.trim()}\n`);
     result.episodic = toDataRelative(target);
   }
 
   if (typeof payload.workingSelfUpdate === "string" && payload.workingSelfUpdate.trim()) {
     const lines = payload.workingSelfUpdate.trim().split("\n").slice(0, WORKING_SELF_MAX_LINES);
     fs.mkdirSync(MEMORY_DIR, { recursive: true });
-    fs.writeFileSync(WORKING_SELF_PATH, `${lines.join("\n")}\n`, "utf8");
+    atomicWrite(WORKING_SELF_PATH, `${lines.join("\n")}\n`);
     result.workingSelfUpdated = true;
   }
 
@@ -291,10 +299,11 @@ export async function fileTranscript(transcriptRelativePath: string): Promise<Fi
       "",
     ].join("\n");
 
-    const target = uniquePath(SEMANTIC_DIR, slugify(note.slug));
-    fs.writeFileSync(target, `${frontmatter}# ${note.title}\n\n${note.body.trim()}\n`, "utf8");
+    const target = operationId ? path.join(SEMANTIC_DIR, `${slugify(note.slug)}${operationSuffix}.md`) : uniquePath(SEMANTIC_DIR, slugify(note.slug));
+    atomicWrite(target, `${frontmatter}# ${note.title}\n\n${note.body.trim()}\n`);
       result.semantic.push(toDataRelative(target));
   }
 
+  if (receiptPath) writeJson(receiptPath, { payload, result });
   return result;
 }

@@ -1,3 +1,4 @@
+import { writeJson } from "./runtime/files.js";
 import fs from "node:fs";
 import { dataPath, ensureDataDirectory } from "@/lib/paths";
 
@@ -92,6 +93,6 @@ export function writeSettings(update: Partial<StudioSettings>): StudioSettings {
   }
 
   ensureDataDirectory();
-  fs.writeFileSync(dataPath(SETTINGS_FILE), `${JSON.stringify(next, null, 2)}\n`);
+  writeJson(dataPath(SETTINGS_FILE), next);
   return next;
 }

@@ -3,109 +3,20 @@
 /**
  * One place that answers "is anything happening right now?".
  *
- * Every panel in this app already talks to the server with plain fetch, so the
- * store instruments fetch once and counts the calls that are in flight. That
- * means a new panel gets the indicator for free instead of having to remember
- * to wire one up. Work that is not a fetch (a Live session opening, audio
- * starting) calls beginWork directly.
+ * clientFetch tracks requests explicitly. Streaming and non-request work
+ * owns a beginWork receipt for its entire lifetime.
  */
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
-type Job = { id: number; label: string };
-
-let jobs: Job[] = [];
-let nextJobId = 0;
-let snapshot: string | null = null;
-const listeners = new Set<() => void>();
-
-function publish() {
-  const next = jobs.length > 0 ? jobs[jobs.length - 1].label : null;
-  if (next === snapshot) return;
-  snapshot = next;
-  listeners.forEach((listener) => listener());
-}
-
-/** Announce work that is not a fetch. Call the returned function when it ends. */
-export function beginWork(label: string) {
-  const id = (nextJobId += 1);
-  jobs = [...jobs, { id, label }];
-  publish();
-  let done = false;
-  return () => {
-    if (done) return;
-    done = true;
-    jobs = jobs.filter((job) => job.id !== id);
-    publish();
-  };
-}
-
-/** Background polls run forever; they are not "something happening". */
-const SILENT = [/^\/api\/ableton\/health/];
-
-function labelFor(path: string, method: string) {
-  const reading = method === "GET" || method === "HEAD";
-  if (path.startsWith("/api/talk/tools")) return "Working with your files";
-  if (path.startsWith("/api/talk/config")) return "Opening the session";
-  if (path.startsWith("/api/talk/transcripts")) return "Saving the transcript";
-  if (path.startsWith("/api/board")) return reading ? "Loading the board" : "Saving the board";
-  if (path.startsWith("/api/contacts")) return reading ? "Loading contacts" : "Saving contacts";
-  if (path.startsWith("/api/settings")) return reading ? "Loading settings" : "Saving settings";
-  if (path.startsWith("/api/ableton/discover")) return "Scanning the network";
-  if (path.startsWith("/api/ableton")) return "Talking to Live";
-  return "Working";
-}
-
-function requestPath(input: RequestInfo | URL) {
-  const raw =
-    typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
-  try {
-    const url = new URL(raw, window.location.href);
-    return url.origin === window.location.origin ? url.pathname : null;
-  } catch {
-    return null;
-  }
-}
-
-let instrumented = false;
-
-function instrumentFetch() {
-  if (instrumented || typeof window === "undefined") return;
-  instrumented = true;
-
-  const original = window.fetch.bind(window);
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const path = requestPath(input);
-    const tracked =
-      path !== null && path.startsWith("/api/") && !SILENT.some((pattern) => pattern.test(path));
-    if (!tracked) return original(input, init);
-
-    const method = (
-      init?.method ??
-      (typeof input === "object" && "method" in input ? (input as Request).method : "GET")
-    ).toUpperCase();
-    const end = beginWork(labelFor(path, method));
-    try {
-      return await original(input, init);
-    } finally {
-      end();
-    }
-  };
-}
-
-function subscribe(listener: () => void) {
-  instrumentFetch();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
+import { subscribe, workSnapshot } from "@/lib/work-store";
+export { beginWork } from "@/lib/work-store";
 
 /** The label of the most recent in-flight job, or null when the app is idle. */
 export function useWorking() {
   return useSyncExternalStore(
     subscribe,
-    () => snapshot,
+    workSnapshot,
     () => null,
   );
 }

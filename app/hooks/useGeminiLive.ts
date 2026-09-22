@@ -1,5 +1,8 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
+import { mergeTranscriptText } from "@/lib/transcript-text";
+import { createMeterStore } from "@/lib/meter-store";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /** Transcript speaker labels. The tool label is fixed; the other two come from assistant.json. */
@@ -188,11 +191,15 @@ export function useGeminiLive({
   const [error, setError] = useState<string | null>(null);
   const [turns, setTurns] = useState<TalkTurn[]>([]);
   const [toolActivity, setToolActivity] = useState<ToolActivity[]>([]);
-  const [micLevel, setMicLevel] = useState(0);
+  const meter = useRef(createMeterStore()).current;
+  const [callStartedAt, setCallStartedAt] = useState<number | null>(null);
+  const generationRef = useRef(0);
   const [muted, setMutedState] = useState(false);
   const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const queuedFrames = useRef<string[]>([]);
+  const readyRef = useRef(false);
   const captureContextRef = useRef<AudioContext | null>(null);
   const playbackContextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -227,7 +234,7 @@ export function useGeminiLive({
   const openSocketRef = useRef<((options: { isReconnect: boolean; minimal?: boolean }) => void) | null>(null);
 
   const persistHandle = useCallback((handle: string | null, operationNamespace = toolOperationNamespaceRef.current) => {
-    void fetch("/api/conversation/handle", {
+    void clientFetch("/api/conversation/handle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -252,7 +259,7 @@ export function useGeminiLive({
     lastActivityRef.current = Date.now();
     const current = turnsRef.current[turnsRef.current.length - 1];
     if (current && current.speaker === speaker && !current.typed) {
-      current.text += text;
+      current.text = mergeTranscriptText(current.text, text);
       turnsRef.current = [...turnsRef.current.slice(0, -1), { ...current }];
     } else {
       nextTurnId.current += 1;
@@ -289,21 +296,20 @@ export function useGeminiLive({
     playerRef.current = null;
     captureContextRef.current = null;
     playbackContextRef.current = null;
-    setMicLevel(0);
+    meter.set(0);
   }, []);
 
   const sendToolResponse = useCallback((call: FunctionCall, response: Record<string, unknown>) => {
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(
-      JSON.stringify({
-        toolResponse: { functionResponses: [{ id: call.id, name: call.name, response }] },
-      }),
-    );
+    if (closingRef.current) return;
+    const frame = JSON.stringify({ toolResponse: { functionResponses: [{ id: call.id, name: call.name, response }] } });
+    if (!readyRef.current || !socket || socket.readyState !== WebSocket.OPEN) queuedFrames.current.push(frame);
+    else socket.send(frame);
   }, []);
 
   const runToolCall = useCallback(
     async (call: FunctionCall) => {
+      const generation = generationRef.current;
       const name = call.name || "unknown";
       const providerCallId = call.id?.trim();
       const activityId = providerCallId || `${name}-${Date.now()}`;
@@ -327,12 +333,13 @@ export function useGeminiLive({
           providerCallId || (await fallbackLiveToolCallId(name, args))
         }`;
 
-        const response = await fetch("/api/talk/tools", {
+        const response = await clientFetch("/api/talk/tools", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name, args, operationId }),
         });
         const body = (await response.json()) as { result?: unknown; error?: string };
+        if (generation !== generationRef.current) return;
 
         if (!response.ok || body.error) {
           settle("error");
@@ -353,6 +360,7 @@ export function useGeminiLive({
         settle("done");
         sendToolResponse(call, { result: body.result });
       } catch (caught) {
+        if (generation !== generationRef.current) return;
         settle("error");
         sendToolResponse(call, {
           error: caught instanceof Error ? caught.message : `Tool ${name} failed.`,
@@ -363,6 +371,7 @@ export function useGeminiLive({
   );
 
   const startMicrophone = useCallback(async () => {
+    const generation = generationRef.current;
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("This browser blocks microphone access (needs localhost or https).");
     }
@@ -370,6 +379,7 @@ export function useGeminiLive({
     // Do not constrain sampleRate here: some browsers reject the constraint and
     // kill the session. The capture AudioContext already runs at 16 kHz.
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (generation !== generationRef.current || closingRef.current) { stream.getTracks().forEach((track) => track.stop()); return; }
     streamRef.current = stream;
 
     const context = captureContextRef.current;
@@ -382,6 +392,7 @@ export function useGeminiLive({
       URL.revokeObjectURL(workletUrl);
     }
 
+    if (generation !== generationRef.current || closingRef.current) { stream.getTracks().forEach((track) => track.stop()); return; }
     const source = context.createMediaStreamSource(stream);
     const recorder = new AudioWorkletNode(context, "pcm-recorder");
     const silent = context.createGain();
@@ -394,7 +405,7 @@ export function useGeminiLive({
       const samples = new Int16Array(event.data);
       let sum = 0;
       for (let i = 0; i < samples.length; i += 1) sum += samples[i] * samples[i];
-      setMicLevel(Math.min(1, Math.sqrt(sum / samples.length) / 8000));
+      meter.set(Math.min(1, Math.sqrt(sum / samples.length) / 8000));
 
       // realtimeInput.audio as a single blob: the mediaChunks array shape is
       // rejected by current Live models and silently ends the session.
@@ -418,6 +429,8 @@ export function useGeminiLive({
 
   const handleMessage = useCallback(
     async (event: MessageEvent) => {
+      const generation = generationRef.current;
+      const originSocket = socketRef.current;
       let message: Record<string, unknown>;
       try {
         message = await parseSocketMessage(event.data);
@@ -425,6 +438,7 @@ export function useGeminiLive({
         return;
       }
 
+      if (generation !== generationRef.current || originSocket !== socketRef.current || closingRef.current) return;
       if (typeof message.relayError === "string") {
         relayErrorRef.current = message.relayError;
         setError(message.relayError);
@@ -438,6 +452,7 @@ export function useGeminiLive({
           // (the recorder reads socketRef every chunk), so opening it again
           // would stack a second capture graph.
           if (!streamRef.current) await startMicrophone();
+          if (generation !== generationRef.current || originSocket !== socketRef.current || closingRef.current) return;
 
           reconnectAttemptsRef.current = 0;
           tokenOverflowRetryRef.current = false;
@@ -454,8 +469,11 @@ export function useGeminiLive({
 
           lastActivityRef.current = Date.now();
           setError(null);
+          readyRef.current = true;
+          for (const frame of queuedFrames.current.splice(0)) socketRef.current?.send(frame);
           setStatus("live");
         } catch (caught) {
+          if (generation !== generationRef.current || closingRef.current) return;
           setError(caught instanceof Error ? caught.message : "Microphone access failed.");
           setStatus("error");
           closingRef.current = true;
@@ -532,7 +550,7 @@ export function useGeminiLive({
   );
 
   const loadConfig = useCallback(async (modeId: string, minimal: boolean) => {
-    const response = await fetch(
+    const response = await clientFetch(
       `/api/talk/config?mode=${encodeURIComponent(modeId)}${minimal ? "&minimal=1" : ""}`,
       { cache: "no-store" },
     );
@@ -554,17 +572,22 @@ export function useGeminiLive({
    */
   const openSocket = useCallback(
     async ({ isReconnect, minimal = false }: { isReconnect: boolean; minimal?: boolean }) => {
+      const generation = generationRef.current;
       if (minimal) {
         try {
-          setupRef.current = (await loadConfig(modeIdRef.current, true)).setup ?? setupRef.current;
+          const config = await loadConfig(modeIdRef.current, true);
+          if (generation !== generationRef.current) return;
+          setupRef.current = config.setup ?? setupRef.current;
         } catch {
           // Keep the setup we already have rather than losing the retry.
         }
       }
 
+      if (closingRef.current || generation !== generationRef.current) return;
       const setup = setupRef.current;
       if (!setup) return;
 
+      readyRef.current = false;
       relayErrorRef.current = null;
       setStatus(isReconnect ? "reconnecting" : "connecting");
 
@@ -591,12 +614,15 @@ export function useGeminiLive({
       socketRef.current = socket;
 
       socket.addEventListener("open", () => socket.send(JSON.stringify({ setup: attemptSetup })));
-      socket.addEventListener("message", (event) => void handleMessage(event));
+      socket.addEventListener("message", (event) => {
+        if (generation === generationRef.current && socketRef.current === socket) void handleMessage(event);
+      });
       socket.addEventListener("error", () => {
         // The close handler decides what to do; an error alone is not terminal.
       });
 
       socket.addEventListener("close", (event) => {
+        if (generation !== generationRef.current) return;
         if (socketRef.current === socket) socketRef.current = null;
         if (goAwayTimerRef.current !== null) {
           window.clearTimeout(goAwayTimerRef.current);
@@ -700,6 +726,10 @@ export function useGeminiLive({
 
   const connect = useCallback(
     async (modeId: string) => {
+      const generation = ++generationRef.current;
+      readyRef.current = false;
+      queuedFrames.current = [];
+      setCallStartedAt(Date.now());
       setError(null);
       setStatus("connecting");
       // Turns here are only this call's live display buffer; the conversation
@@ -721,6 +751,7 @@ export function useGeminiLive({
 
       try {
         const body = await loadConfig(modeId, false);
+        if (generation !== generationRef.current) return;
         setupRef.current = body.setup ?? null;
         seedTurnsRef.current = body.seedTurns ?? [];
         // A handle stored on disk means a call was interrupted (reload, crash)
@@ -735,6 +766,7 @@ export function useGeminiLive({
         // another reload of this resumed call will keep the same operation ids.
         if (sessionHandleRef.current) persistHandle(sessionHandleRef.current);
       } catch (caught) {
+        if (generation !== generationRef.current) return;
         setError(caught instanceof Error ? caught.message : "Could not build the session config.");
         setStatus("error");
         return;
@@ -746,17 +778,21 @@ export function useGeminiLive({
         // the assistant's voice and makes it sound worse.
         captureContextRef.current = new AudioContext({ sampleRate: CAPTURE_RATE });
         await captureContextRef.current.resume();
+        if (generation !== generationRef.current) return;
         playbackContextRef.current = new AudioContext({ sampleRate: PLAYBACK_RATE });
         await playbackContextRef.current.resume();
+        if (generation !== generationRef.current) return;
         playerRef.current = new PcmPlayer(playbackContextRef.current);
         playerRef.current.gain.gain.value = mutedRef.current ? 0 : 1;
       } catch (caught) {
+        if (generation !== generationRef.current) return;
         setError(caught instanceof Error ? caught.message : "Could not start audio.");
         setStatus("error");
         teardownAudio();
         return;
       }
 
+      if (generation !== generationRef.current) { teardownAudio(); return; }
       void openSocket({ isReconnect: false });
     },
     [clearTimers, loadConfig, openSocket, persistHandle, teardownAudio],
@@ -764,9 +800,23 @@ export function useGeminiLive({
 
   const disconnect = useCallback(async (): Promise<EndedSession> => {
     closingRef.current = true;
+    readyRef.current = false;
+    queuedFrames.current = [];
+    generationRef.current += 1;
     clearTimers();
 
     const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      // Wait for the relay to persist the last fragment before the view reloads.
+      await new Promise<void>((resolve) => {
+        const finish = () => { clearTimeout(timer); socket.removeEventListener("message", flushed); socket.removeEventListener("close", finish); resolve(); };
+        const flushed = (event: MessageEvent) => { if (typeof event.data === "string" && event.data.includes('"relayFlushed":true')) finish(); };
+        const timer = window.setTimeout(finish, 2000);
+        socket.addEventListener("message", flushed);
+        socket.addEventListener("close", finish);
+        socket.send(JSON.stringify({ studioEnd: true }));
+      });
+    }
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, "Session ended");
     socketRef.current = null;
     teardownAudio();
@@ -797,17 +847,21 @@ export function useGeminiLive({
       options?: { silent?: boolean },
     ) => {
       const socket = socketRef.current;
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (closingRef.current) return false;
+      const deliver = (frame: string) => {
+        if (readyRef.current && socket?.readyState === WebSocket.OPEN) socket.send(frame);
+        else queuedFrames.current.push(frame);
+      };
 
       // Live takes a still image on the video channel; there is no inlineData
       // path for documents, which is why everything else arrives as text.
       if (image) {
-        socket.send(JSON.stringify({ realtimeInput: { video: image } }));
+        deliver(JSON.stringify({ realtimeInput: { video: image } }));
         lastActivityRef.current = Date.now();
       }
 
       const clean = text.trim();
-      if (!clean) return;
+      if (!clean) return Boolean(image);
 
       if (!options?.silent) appendWholeTurn(userLabel, clean);
       else lastActivityRef.current = Date.now();
@@ -815,7 +869,8 @@ export function useGeminiLive({
       // realtimeInput rather than clientContent: it keeps typed turns
       // distinguishable from history seeding, which the relay must never
       // persist, and it is the shape this Live model expects for live input.
-      socket.send(JSON.stringify({ realtimeInput: { text: clean } }));
+      deliver(JSON.stringify({ realtimeInput: { text: clean } }));
+      return true;
     },
     [appendWholeTurn, userLabel],
   );
@@ -857,6 +912,17 @@ export function useGeminiLive({
     return () => window.clearInterval(timer);
   }, [disconnect, status]);
 
+  useEffect(() => () => {
+    closingRef.current = true;
+    readyRef.current = false;
+    queuedFrames.current = [];
+    generationRef.current += 1;
+    clearTimers();
+    socketRef.current?.close(1000, "Window closed");
+    socketRef.current = null;
+    teardownAudio();
+  }, [clearTimers, teardownAudio]);
+
   // No pagehide beacon: the relay flushes whatever was mid-sentence when the
   // browser socket dies, which covers a closed tab better than a beacon can.
 
@@ -865,7 +931,8 @@ export function useGeminiLive({
     error,
     turns,
     toolActivity,
-    micLevel,
+    meter,
+    callStartedAt,
     muted,
     setMuted,
     idleSecondsLeft,

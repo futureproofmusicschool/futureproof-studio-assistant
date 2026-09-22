@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -55,8 +56,8 @@ export function GoogleMigrationPanel() {
   const refresh = useCallback(async () => {
     try {
       const [migrationResponse, connectorResponse] = await Promise.all([
-        fetch("/api/google/migration", { cache: "no-store" }),
-        fetch("/api/connectors/status", { cache: "no-store" }),
+        clientFetch("/api/google/migration", { cache: "no-store" }),
+        clientFetch("/api/connectors/status", { cache: "no-store" }),
       ]);
       const next = await responseBody(migrationResponse);
       setStatus(next);
@@ -85,7 +86,7 @@ export function GoogleMigrationPanel() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/google/migration", { method: "POST" });
+      const response = await clientFetch("/api/google/migration", { method: "POST" });
       const next = await responseBody(response);
       setStatus(next);
       setConfirming(false);

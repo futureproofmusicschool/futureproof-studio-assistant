@@ -1,3 +1,5 @@
+import { boundedFetch } from "@/lib/request-deadline";
+import { consumeModelStream } from "@/lib/model-stream";
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -111,90 +113,6 @@ function sseChunk(event: StreamEvent) {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-type StreamedCandidate = {
-  candidates?: { content?: { parts?: GeminiPart[] } }[];
-  error?: { message?: string };
-};
-
-/**
- * Read one streamGenerateContent?alt=sse response, forwarding text deltas via
- * emit and collecting the full model parts (text + functionCalls) for the
- * conversation history.
- */
-async function consumeModelStream(
-  response: Response,
-  emit: (event: StreamEvent) => void,
-): Promise<GeminiPart[]> {
-  const collected: GeminiPart[] = [];
-  let textBuffer = "";
-  let textSignature: string | undefined;
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Gemini returned no response body.");
-
-  const decoder = new TextDecoder();
-  let pending = "";
-
-  const flushText = () => {
-    if (textBuffer) {
-      collected.push({ text: textBuffer, ...(textSignature ? { thoughtSignature: textSignature } : {}) });
-      textBuffer = "";
-      textSignature = undefined;
-    }
-  };
-
-  const handleLine = (line: string) => {
-    if (!line.startsWith("data:")) return;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") return;
-
-    let parsed: StreamedCandidate;
-    try {
-      parsed = JSON.parse(payload) as StreamedCandidate;
-    } catch {
-      return;
-    }
-    if (parsed.error?.message) throw new Error(parsed.error.message);
-
-    for (const part of parsed.candidates?.[0]?.content?.parts ?? []) {
-      if (part.thought) {
-        // Thought summaries are not shown, but their signatures must survive
-        // the round trip or the follow-up request is rejected.
-        if (part.thoughtSignature) {
-          collected.push({ thought: true, text: part.text ?? "", thoughtSignature: part.thoughtSignature });
-        }
-        continue;
-      }
-      if (typeof part.text === "string" && part.text) {
-        textBuffer += part.text;
-        if (part.thoughtSignature) textSignature = part.thoughtSignature;
-        emit({ type: "text", delta: part.text });
-      }
-      if (part.functionCall) {
-        flushText();
-        collected.push({
-          functionCall: part.functionCall,
-          ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
-        });
-      }
-    }
-  };
-
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    pending += decoder.decode(value, { stream: true });
-
-    let newline = pending.indexOf("\n");
-    while (newline !== -1) {
-      handleLine(pending.slice(0, newline).trim());
-      pending = pending.slice(newline + 1);
-      newline = pending.indexOf("\n");
-    }
-  }
-  handleLine(pending.trim());
-  flushText();
-  return collected;
-}
 
 async function runTool(name: string, args: Record<string, unknown>, operationId: string) {
   if (isResearchTool(name)) return runResearchTool(name, args);
@@ -266,8 +184,8 @@ export async function POST(request: Request) {
   const operationNamespace =
     userTurn?.id ?? priorUserTurn?.id ?? `unpersisted-${crypto.randomUUID()}`;
 
-  const assistantSegments: string[] = [];
-  const toolTurns: { role: "tool"; mode: "text"; text: string }[] = [];
+  const produced: { role: "assistant" | "tool"; mode: "text"; text: string }[] = [];
+  let connected = true;
   const requestStartedAt = performance.now();
   let promptMs = 0;
   let firstTextMs: number | null = null;
@@ -281,7 +199,15 @@ export async function POST(request: Request) {
         if (event.type === "text" && firstTextMs === null) {
           firstTextMs = Math.round(performance.now() - requestStartedAt);
         }
-        controller.enqueue(encoder.encode(sseChunk(event)));
+        if (event.type === "text") {
+          const last = produced[produced.length - 1];
+          if (last?.role === "assistant") last.text += event.delta;
+          else produced.push({ role: "assistant", mode: "text", text: event.delta });
+        }
+        if (connected) {
+          try { controller.enqueue(encoder.encode(sseChunk(event))); }
+          catch { connected = false; }
+        }
       };
 
       try {
@@ -308,7 +234,7 @@ export async function POST(request: Request) {
           const deadline = setTimeout(() => abort.abort(), MODEL_TIMEOUT_MS);
           let response: Response;
           try {
-            response = await fetch(
+            response = await boundedFetch(
             `https://generativelanguage.googleapis.com/v1beta/models/${CHAT_MODEL}:streamGenerateContent?alt=sse`,
             {
               method: "POST",
@@ -345,9 +271,6 @@ export async function POST(request: Request) {
           }
 
           const modelParts = await consumeModelStream(response, emit);
-          for (const part of modelParts) {
-            if (!part.thought && part.text) assistantSegments.push(part.text);
-          }
 
           const calls = modelParts.filter(
             (part): part is GeminiPart & { functionCall: NonNullable<GeminiPart["functionCall"]> } =>
@@ -390,7 +313,6 @@ export async function POST(request: Request) {
               const answerFirst = sideEffectAnswer(call.functionCall.name, call.functionCall.args ?? {});
               if (answerFirst) {
                 modelParts.unshift({ text: answerFirst });
-                assistantSegments.push(answerFirst);
                 emit({ type: "text", delta: answerFirst });
                 roundHasVisibleText = true;
               }
@@ -408,7 +330,7 @@ export async function POST(request: Request) {
             );
             const failed = "error" in outcome;
             emit({ type: "tool", name: call.functionCall.name, status: failed ? "error" : "done" });
-            toolTurns.push({
+            produced.push({
               role: "tool",
               mode: "text",
               text: `${call.functionCall.name} ${failed ? "failed" : "done"}`,
@@ -431,14 +353,14 @@ export async function POST(request: Request) {
       } finally {
         // Persist whatever was produced, even on a mid-stream failure: a partial
         // answer the artist already read belongs in the thread.
-        const answer = assistantSegments.join("").trim();
-        appendTurns([...toolTurns, ...(answer ? [{ role: "assistant" as const, mode: "text" as const, text: answer }] : [])]);
+        appendTurns(produced);
         console.info(
           `[text-chat] total_ms=${Math.round(performance.now() - requestStartedAt)} prompt_ms=${promptMs} first_text_ms=${firstTextMs ?? "none"} rounds=${modelRounds} tools=${usedTools.join(",") || "none"}`,
         );
-        controller.close();
+        if (connected) { try { controller.close(); } catch { /* Browser already closed. */ } }
       }
     },
+    cancel() { connected = false; },
   });
 
   return new Response(stream, {

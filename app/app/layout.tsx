@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { Metadata } from "next";
+import { LiveSessionProvider } from "@/components/LiveSessionProvider";
 import { AppShell } from "@/components/AppShell";
 import { readAssistantConfig } from "@/lib/config";
 import { enabledTabs } from "@/lib/tabs";
@@ -21,9 +22,11 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
   return (
     <html lang="en" style={style}>
       <body>
+        <LiveSessionProvider assistantName={config.name} userName={config.userName}>
         <AppShell name={config.name} tabs={enabledTabs(config.tabs)}>
           {children}
         </AppShell>
+        </LiveSessionProvider>
       </body>
     </html>
   );

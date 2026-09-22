@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import { extractPdf } from "@/lib/pdf-text";
 import fs from "node:fs";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -53,14 +55,10 @@ function slugify(value: string) {
 }
 
 async function describePdf(bytes: Uint8Array) {
-  // pdf-parse is already a dependency for the reference shelf.
-  const { default: pdfParse } = (await import("pdf-parse")) as unknown as {
-    default: (data: Buffer) => Promise<{ text?: string; numpages?: number }>;
-  };
-  const parsed = await pdfParse(Buffer.from(bytes));
+  const parsed = await extractPdf(bytes);
   const text = (parsed.text ?? "").replace(/\n{3,}/g, "\n\n").trim();
   if (!text) return "The PDF has no extractable text (it may be scanned images).";
-  const header = parsed.numpages ? `PDF, ${parsed.numpages} page${parsed.numpages === 1 ? "" : "s"}.\n\n` : "";
+  const header = parsed.pages ? `PDF, ${parsed.pages} page${parsed.pages === 1 ? "" : "s"}.\n\n` : "";
   return `${header}${text.slice(0, PDF_SUMMARY_CHARS)}${text.length > PDF_SUMMARY_CHARS ? "\n\n[truncated]" : ""}`;
 }
 
@@ -114,7 +112,7 @@ export async function POST(request: Request) {
   }
 
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-  const filename = `${timestampForFilename(new Date())}-${slugify(file.name)}${kind.extension}`;
+  const filename = `${timestampForFilename(new Date())}-${slugify(file.name)}-${crypto.randomUUID()}${kind.extension}`;
   fs.writeFileSync(path.join(UPLOADS_DIR, filename), bytes);
 
   const mimeType = kind.kind === "image" ? MIME_FOR_IMAGE[kind.extension] : file.type || "application/octet-stream";

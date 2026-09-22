@@ -10,6 +10,7 @@ export type ChatToolCategory =
   | "documents"
   | "contacts"
   | "reference"
+  | "pod_hd"
   | "ableton"
   | "web"
   | "deep_research";
@@ -26,7 +27,7 @@ export const CAPABILITY_DECLARATION = {
       category: {
         type: "STRING",
         description:
-          "One of: studio_files, artifacts, documents, contacts, reference, ableton, web, deep_research.",
+          "One of: studio_files, artifacts, documents, contacts, reference, pod_hd, ableton, web, deep_research.",
       },
     },
     required: ["category"],
@@ -39,6 +40,7 @@ const TOOL_NAMES: Record<Exclude<ChatToolCategory, "web">, readonly string[]> = 
   documents: ["write_document", "list_documents", "read_document"],
   contacts: ["search_contacts", "read_contact", "draft_email"],
   reference: ["search_reference", "read_reference"],
+  pod_hd: ["list_pod_hd_presets", "read_pod_hd_preset", "create_pod_hd_preset", "open_pod_hd_preset", "list_pod_hd_models", "create_pod_hd_chain"],
   ableton: [
     "get_live_overview",
     "get_live_track",
@@ -110,6 +112,8 @@ export function planChatTools(text: string) {
   ) {
     categories.add("reference");
   }
+
+  if (includes(text, /\b(pod hd|podhd|line ?6|hbe)\b/)) categories.add("pod_hd");
 
   const mentionsAbleton = includes(text, /\bableton\b|\blive (?:set|session)\b/);
   const readsLiveState = includes(

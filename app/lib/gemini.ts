@@ -1,3 +1,4 @@
+import { boundedFetch } from "./request-deadline";
 import { readGeminiApiKey } from "@/lib/env";
 
 /**
@@ -15,7 +16,7 @@ export function requireGeminiKey() {
 }
 
 export async function geminiFetch(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await boundedFetch(`${BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

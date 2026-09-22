@@ -1,12 +1,15 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import Link from "next/link";
-import { type CSSProperties, useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState, useSyncExternalStore } from "react";
+
+import type { MeterStore } from "@/lib/meter-store";
 
 type ProjectStatusRailProps = {
   inCall: boolean;
   lastFiledDay: string | null;
-  micLevel: number;
+  meter: MeterStore;
   publicPreview: boolean;
 };
 
@@ -25,7 +28,7 @@ function filedLabel(day: string | null) {
   return `Filed ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(parsed)}`;
 }
 
-export function ProjectStatusRail({ inCall, lastFiledDay, micLevel, publicPreview }: ProjectStatusRailProps) {
+export function ProjectStatusRail({ inCall, lastFiledDay, meter, publicPreview }: ProjectStatusRailProps) {
   const [abletonConnected, setAbletonConnected] = useState<boolean | null>(null);
   const [driveConnected, setDriveConnected] = useState<boolean | null>(null);
 
@@ -35,7 +38,7 @@ export function ProjectStatusRail({ inCall, lastFiledDay, micLevel, publicPrevie
 
     const inspectAbleton = async () => {
       try {
-        const response = await fetch("/api/ableton/health", { cache: "no-store" });
+        const response = await clientFetch("/api/ableton/health", { cache: "no-store" });
         const body = (await response.json()) as AbletonHealth;
         if (active) setAbletonConnected(response.ok && body.reachable === true);
       } catch {
@@ -45,7 +48,7 @@ export function ProjectStatusRail({ inCall, lastFiledDay, micLevel, publicPrevie
 
     const inspectDrive = async () => {
       try {
-        const response = await fetch("/api/connectors/status", { cache: "no-store" });
+        const response = await clientFetch("/api/connectors/status", { cache: "no-store" });
         const body = (await response.json()) as ConnectorStatus;
         if (active) setDriveConnected(response.ok && body.apps?.drive?.connected === true);
       } catch {
@@ -85,21 +88,10 @@ export function ProjectStatusRail({ inCall, lastFiledDay, micLevel, publicPrevie
         },
       ];
 
-  const signalStyle = { "--signal-level": Math.max(0.12, micLevel).toFixed(2) } as CSSProperties;
 
   return (
     <aside className="project-status-rail" aria-label="Project status">
-      <div className="project-signal" data-live={inCall ? "true" : "false"} style={signalStyle} aria-hidden="true">
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-        <span />
-      </div>
+      <ProjectSignal inCall={inCall} meter={meter} />
 
       <section className="project-status-section">
         <div className="project-status-heading">
@@ -130,5 +122,23 @@ export function ProjectStatusRail({ inCall, lastFiledDay, micLevel, publicPrevie
         <span aria-hidden="true">↗</span>
       </Link>
     </aside>
+  );
+}
+
+function ProjectSignal({ inCall, meter }: { inCall: boolean; meter: MeterStore }) {
+  const micLevel = useSyncExternalStore(meter.subscribe, meter.getSnapshot, meter.getServerSnapshot);
+  const signalStyle = { "--signal-level": Math.max(0.12, micLevel).toFixed(2) } as CSSProperties;
+  return (
+      <div className="project-signal" data-live={inCall ? "true" : "false"} style={signalStyle} aria-hidden="true">
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+        <span />
+      </div>
   );
 }

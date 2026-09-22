@@ -1,4 +1,5 @@
 "use client";
+import { clientFetch } from "@/lib/client-requests";
 
 import { KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
@@ -24,10 +25,6 @@ const SOURCE_LABELS: Record<DocumentSource, string> = {
   "deep-research": "Research",
 };
 
-// Keep the last successful index while the local app is open. Route changes
-// unmount this view, but they should not make the artist stare at an empty
-// Google round trip every time they come back.
-let cachedDocuments: DocumentSummary[] | null = null;
 
 async function responseError(response: Response) {
   try {
@@ -69,28 +66,33 @@ export function DocsView({
   canTrash = true,
   loadOnMount = false,
 }: DocsViewProps) {
-  const [documents, setDocuments] = useState(() => cachedDocuments ?? initialDocuments);
+  const [documents, setDocuments] = useState(() => initialDocuments);
   const [selected, setSelected] = useState<StudioDocument | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmTrash, setConfirmTrash] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(loadOnMount && cachedDocuments === null);
+  const [loading, setLoading] = useState(loadOnMount);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const requestedInitialLoad = useRef(false);
+  const refreshVersion = useRef(0);
+  const selectionVersion = useRef(0);
+  const selectedIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(cachedDocuments === null);
+    const version = ++refreshVersion.current;
+
     try {
-      const response = await fetch("/api/documents", { cache: "no-store" });
+      const response = await clientFetch("/api/documents", { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
       const body = (await response.json()) as { documents: DocumentSummary[] };
-      cachedDocuments = body.documents;
+      if (version !== refreshVersion.current) return;
       setDocuments(body.documents);
       setError(null);
     } catch (loadError) {
+      if (version !== refreshVersion.current) return null;
       setError(loadError instanceof Error ? loadError.message : "Unable to refresh documents");
     } finally {
-      setLoading(false);
+      if (version === refreshVersion.current) setLoading(false);
     }
   }, []);
 
@@ -101,17 +103,22 @@ export function DocsView({
   }, [loadOnMount, refresh]);
 
   const loadDocument = useCallback(async (id: string, showBusy = true) => {
+    selectedIdRef.current = id;
+    const version = ++selectionVersion.current;
     if (showBusy) setBusy(true);
     setConfirmTrash(false);
     try {
-      const response = await fetch(`/api/documents/${encodeURIComponent(id)}`, { cache: "no-store" });
+      const response = await clientFetch(`/api/documents/${encodeURIComponent(id)}`, { cache: "no-store" });
       if (!response.ok) throw new Error(await responseError(response));
-      setSelected((await response.json()) as StudioDocument);
+      const document = (await response.json()) as StudioDocument;
+      if (version !== selectionVersion.current) return;
+      setSelected(document);
       setError(null);
     } catch (loadError) {
+      if (version !== selectionVersion.current) return;
       setError(loadError instanceof Error ? loadError.message : "Unable to open that document");
     } finally {
-      if (showBusy) setBusy(false);
+      if (version === selectionVersion.current) setBusy(false);
     }
   }, []);
 
@@ -120,23 +127,34 @@ export function DocsView({
     // the ordering/excerpts and the currently visible preview.
     const handleFocus = () => {
       void refresh();
-      if (selected?.id) void loadDocument(selected.id, false);
+      if (selectedIdRef.current) void loadDocument(selectedIdRef.current, false);
+    };
+    const invalidate = () => {
+      selectionVersion.current++;
+      selectedIdRef.current = null;
+      setSelected(null);
+      setDocuments([]);
+      setBusy(false);
+      void refresh();
     };
     window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [loadDocument, refresh, selected?.id]);
+    window.addEventListener("studio-data-invalidated", invalidate);
+    return () => { window.removeEventListener("focus", handleFocus); window.removeEventListener("studio-data-invalidated", invalidate); };
+  }, [loadDocument, refresh]);
 
   async function create(title: string, operationId: string) {
     setBusy(true);
     try {
-      const response = await fetch("/api/documents", {
+      const response = await clientFetch("/api/documents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, operationId }),
       });
       if (!response.ok) throw new Error(await responseError(response));
       const document = (await response.json()) as StudioDocument;
+      selectionVersion.current++;
       setCreating(false);
+      selectedIdRef.current = document.id;
       setSelected(document);
       setError(null);
       await refresh();
@@ -151,10 +169,12 @@ export function DocsView({
     if (!selected) return;
     setBusy(true);
     try {
-      const response = await fetch(`/api/documents/${encodeURIComponent(selected.id)}`, {
+      const response = await clientFetch(`/api/documents/${encodeURIComponent(selected.id)}`, {
         method: "DELETE",
       });
       if (!response.ok) throw new Error(await responseError(response));
+      selectionVersion.current++;
+      selectedIdRef.current = null;
       setSelected(null);
       setConfirmTrash(false);
       setError(null);

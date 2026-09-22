@@ -3,33 +3,9 @@ import { dataPath, ensureDataDirectory } from "@/lib/paths";
 
 const ENV_PATH = dataPath(".env");
 
-// Ported from server.js so the Talk stack reads the same external data file
-// the voice relay uses. The key never leaves the server.
-export function parseEnv(source: string) {
-  const values: Record<string, string> = {};
-
-  for (const rawLine of source.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-
-    const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-
-    let value = match[2].trim();
-    if (
-      value.length >= 2 &&
-      ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'")))
-    ) {
-      value = value.slice(1, -1);
-    } else {
-      value = value.replace(/\s+#.*$/, "").trim();
-    }
-    values[match[1]] = value;
-  }
-
-  return values;
-}
+import { atomicWrite } from "./runtime/files.js";
+import { parseEnv } from "./runtime/config.js";
+export { parseEnv };
 
 function readEnvValue(name: string) {
   try {
@@ -61,7 +37,7 @@ function writeEnvValue(name: string, value: string) {
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   lines.push(`${name}=${clean}`);
   ensureDataDirectory();
-  fs.writeFileSync(ENV_PATH, `${lines.join("\n")}\n`);
+  atomicWrite(ENV_PATH, `${lines.join("\n")}\n`);
 }
 
 export function readGeminiApiKey() {
