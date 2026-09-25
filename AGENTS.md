@@ -175,7 +175,7 @@ When real information is needed for the app to work, put it in the external stud
 Before every commit or push:
 
 1. Inspect the staged diff for personal information and credentials.
-2. Verify that the configured Git author name and email are approved public or organization identities. If they are personal, stop and ask instead of creating the commit.
+2. Verify the configured Git author name and email. On the same computer, if they match an identity already used in this repository's pushed commits, treat that saved identity as approved and do not ask for confirmation again. Otherwise, use an approved public or organization identity; if a new or changed identity appears personal, stop and ask before committing.
 3. Run `scripts/pre-commit-guard.sh`.
 4. Run `git ls-files -ci --exclude-standard`; it must return nothing.
 5. If anything private was ever committed, remove it from the current tree and tell the user that Git history may also need to be rewritten. Gitignoring an already tracked file is not enough.
