@@ -13,6 +13,7 @@ import { useLiveSession } from "./LiveSessionProvider";
 import { MicrophoneMeter } from "./MicrophoneMeter";
 import { ChatComposer } from "./ChatComposer";
 import { frameBuffer } from "@/lib/frame-buffer";
+import { remarkArrowNotation } from "@/lib/assistant-markdown";
 import type { TalkMode } from "@/lib/talk";
 
 /**
@@ -133,7 +134,7 @@ const ConversationRow = memo(function ConversationRow({ item, assistantName, use
                 <p className="talk-turn-text">{item.text}</p>
               ) : (
                 <div className="talk-turn-text chat-markdown">
-                  <Markdown remarkPlugins={[remarkGfm]}>{item.text}</Markdown>
+                  <Markdown remarkPlugins={[remarkGfm, remarkArrowNotation]}>{item.text}</Markdown>
                 </div>
               )}
             </article>
