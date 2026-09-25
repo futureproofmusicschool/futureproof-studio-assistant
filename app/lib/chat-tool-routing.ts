@@ -12,6 +12,7 @@ export type ChatToolCategory =
   | "reference"
   | "pod_hd"
   | "ableton"
+  | "midi_devices"
   | "web"
   | "deep_research";
 
@@ -27,7 +28,7 @@ export const CAPABILITY_DECLARATION = {
       category: {
         type: "STRING",
         description:
-          "One of: studio_files, artifacts, documents, contacts, reference, pod_hd, ableton, web, deep_research.",
+          "One of: studio_files, artifacts, documents, contacts, reference, pod_hd, ableton, midi_devices, web, deep_research.",
       },
     },
     required: ["category"],
@@ -41,6 +42,7 @@ const TOOL_NAMES: Record<Exclude<ChatToolCategory, "web">, readonly string[]> = 
   contacts: ["search_contacts", "read_contact", "draft_email"],
   reference: ["search_reference", "read_reference"],
   pod_hd: ["list_pod_hd_presets", "read_pod_hd_preset", "create_pod_hd_preset", "open_pod_hd_preset", "list_pod_hd_models", "create_pod_hd_chain"],
+  midi_devices: ["list_midi_devices", "set_midi_parameter"],
   ableton: [
     "get_live_overview",
     "get_live_track",
@@ -115,6 +117,10 @@ export function planChatTools(text: string) {
 
   if (includes(text, /\b(pod hd|podhd|line ?6|hbe)\b/)) categories.add("pod_hd");
 
+  if (includes(text, /\b(midi (?:pedal|device|output|port)|external midi|pedals?|pedalboards?)\b/)) {
+    categories.add("midi_devices");
+  }
+
   const mentionsAbleton = includes(text, /\bableton\b|\blive (?:set|session)\b/);
   const readsLiveState = includes(
     text,
@@ -162,6 +168,7 @@ export function chatProgressMessage(categories: ReadonlySet<ChatToolCategory>) {
   if (categories.has("documents")) return "Got it — I’ll answer here first, then handle the document.";
   if (categories.has("contacts")) return "Got it — I’m checking the relevant outreach details now.";
   if (categories.has("ableton")) return "Got it — I’m checking the live Ableton context now.";
+  if (categories.has("midi_devices")) return "Got it — I’m checking the configured MIDI devices now.";
   if (categories.has("reference")) return "Got it — I’m checking the reference shelf before I answer.";
   if (categories.has("deep_research")) return "Got it — I’m preparing the research request now.";
   if (categories.has("web")) return "Got it — I’m checking the current information now.";

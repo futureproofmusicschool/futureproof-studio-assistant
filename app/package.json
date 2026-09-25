@@ -13,6 +13,8 @@
     "@anthropic-ai/sdk": "^0.115.0",
     "bonjour-service": "^1.4.3",
     "googleapis": "^174.0.1",
+    "jazz-midi": "^1.7.9",
+    "jzz": "^1.9.6",
     "mammoth": "^1.12.0",
     "next": "15.5.23",
     "nodemailer": "^9.0.5",

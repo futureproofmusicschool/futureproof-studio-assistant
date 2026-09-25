@@ -50,7 +50,7 @@ test("unknown models, parameters, blocks, encodings and malformed recipe values 
     {fx1: {model: "0x02090003", footswitch: 0.5}}, {fx1: {model: "0x02090003", tempoSync: 7}},
   ]) assert.throws(() => assembleChain(template, atlas, {name: "Example", blocks: change}));
   for (const recipe of [null, [], {name: ""}, {name: "Example", mixer: {unknown: 1}}, {name: "Example", tempo: 999}]) assert.throws(() => assembleChain(template, atlas, recipe));
-  assert.ok(toolNamesForCategories(["pod_hd"]).has("create_pod_hd_chain"));
+  assert.ok(toolNamesForCategories(new Set(["pod_hd"] as const)).has("create_pod_hd_chain"));
 });
 test("branch routing rejects serial templates and incomplete or duplicate orders", () => {
   const {template, atlas} = fixture();

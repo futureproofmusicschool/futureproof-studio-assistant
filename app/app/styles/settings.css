@@ -154,6 +154,44 @@
   opacity: 0.5;
 }
 
+.midi-toolbar,
+.midi-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0;
+}
+
+.midi-devices-panel button {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  cursor: pointer;
+  padding: 8px 11px;
+}
+
+.midi-devices-panel button:disabled { cursor: not-allowed; opacity: .5; }
+.midi-toolbar button:last-child { background: var(--accent); color: white; border-color: transparent; }
+.midi-message { color: var(--text); font-size: 12px; }
+.midi-device { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 10px 0; }
+.midi-device-head { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(160px, 1.4fr) 100px; gap: 10px; }
+.midi-device-head label, .midi-parameter label { color: var(--text-muted); display: flex; flex-direction: column; font-size: 11px; gap: 4px; }
+.midi-device-head input, .midi-device-head select, .midi-parameter input {
+  background: var(--surface-raised); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); min-width: 0; padding: 8px; width: 100%;
+}
+.midi-device-actions label { align-items: center; display: flex; font-size: 12px; gap: 6px; }
+.midi-parameter-header { color: var(--text-muted); font-size: 11px; font-weight: 700; margin: 10px 0 6px; }
+.midi-parameter { align-items: end; display: grid; grid-template-columns: minmax(130px, 2fr) repeat(3, minmax(60px, .5fr)) auto; gap: 8px; margin-bottom: 8px; }
+
+@media (max-width: 700px) {
+  .midi-device-head { grid-template-columns: 1fr; }
+  .midi-parameter { grid-template-columns: repeat(3, 1fr) auto; }
+  .midi-parameter > input { grid-column: 1 / -1; }
+}
+
 .api-key-panel {
   margin-top: 12px;
 }
@@ -265,4 +303,3 @@
     align-self: flex-start;
   }
 }
-

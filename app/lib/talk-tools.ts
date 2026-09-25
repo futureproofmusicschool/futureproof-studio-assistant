@@ -1,4 +1,5 @@
 import { POD_HD_FUNCTION_DECLARATIONS, isPodHdTool, runPodHdTool } from "@/lib/pod-hd/tools";
+import { MIDI_FUNCTION_DECLARATIONS, isMidiControlTool, runMidiControlTool } from "@/lib/midi-control/tools";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -328,6 +329,7 @@ export async function runStudioTool(
 ): Promise<ToolResult> {
   if (isPodHdTool(name)) return runPodHdTool(name, args);
   if (isAbletonTool(name)) return runAbletonTool(name, args);
+  if (isMidiControlTool(name)) return runMidiControlTool(name, args);
 
   switch (name) {
     case "search_studio_files":
@@ -720,4 +722,5 @@ export const FUNCTION_DECLARATIONS = [
   // v2: board/contacts mutation tools
   ...POD_HD_FUNCTION_DECLARATIONS,
   ...ABLETON_FUNCTION_DECLARATIONS,
+  ...MIDI_FUNCTION_DECLARATIONS,
 ];

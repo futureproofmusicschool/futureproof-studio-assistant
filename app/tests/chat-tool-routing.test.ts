@@ -26,6 +26,14 @@ test("an explicit Ableton session request exposes the Ableton family", () => {
   assert.ok(toolNamesForCategories(categories).has("compose_midi_part"));
 });
 
+test("external MIDI pedal requests expose the hardware tools", () => {
+  const categories = planChatTools("Set the mix on my MIDI pedal.");
+  assert.ok(categories.has("midi_devices"));
+  const names = toolNamesForCategories(categories);
+  assert.ok(names.has("list_midi_devices"));
+  assert.ok(names.has("set_midi_parameter"));
+});
+
 test("document and outreach intents expose only their relevant families", () => {
   const categories = planChatTools("Draft an email to that contact and save it in a Google Doc.");
   assert.deepEqual(Array.from(categories), ["documents", "contacts"]);
