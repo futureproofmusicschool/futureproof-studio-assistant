@@ -657,7 +657,7 @@ export const FUNCTION_DECLARATIONS = [
   {
     name: "read_contact",
     description:
-      "Read one outreach contact in full by the stable contactId returned by search_contacts or included in the session's outreach digest. Includes identity fields, status, notes, and correspondence history from the connected Google store.",
+      "Read one outreach contact in full by the stable contactId returned by search_contacts. Includes identity fields, status, notes, and correspondence history from the connected Google store.",
     parameters: {
       type: "OBJECT",
       properties: { contactId: { type: "STRING", description: "Stable outreach contact id." } },

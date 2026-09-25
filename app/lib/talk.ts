@@ -1,10 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { currentAbletonHost, probeHost } from "@/lib/ableton/bridge";
 import { readBoard } from "@/lib/board";
 import { listInstruments, listStyles } from "@/lib/composer";
 import { listReferenceDocs } from "@/lib/reference";
-import { readContacts } from "@/lib/contacts";
 import { COMPOSER_CLAUDE_MODEL, COMPOSER_GEMINI_MODEL } from "@/lib/models";
 import { dataPath, repoPath } from "@/lib/paths";
 import { readSettings } from "@/lib/settings";
@@ -30,7 +28,7 @@ export type TalkTurn = { speaker: string; text: string };
 export type Modality = "voice" | "text";
 
 const RETRIEVAL_POLICY = `HOW TO USE WHAT YOU HAVE
-You already hold the working-self snapshot and board above; answer from them directly. Voice setup may also include an outreach snapshot. Text chat deliberately loads outreach and live Ableton state only when a request needs them. For deeper local context (past sessions, taste notes, procedures, old transcripts) call search_studio_files first, then read_studio_file on the best hit. For a person or correspondence history, use search_contacts then read_contact. For a saved document, use list_documents then read_document. For facts about the outside world (dates, releases, people, venues) use search. Never guess at contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
+You already hold the working-self snapshot and board above; answer from them directly. Outreach and live Ableton state load on demand in both voice and text. For deeper local context (past sessions, taste notes, procedures, old transcripts) call search_studio_files first, then read_studio_file on the best hit. For a person or correspondence history, use search_contacts then read_contact. For a saved document, use list_documents then read_document. For facts about the outside world (dates, releases, people, venues) use search. Never guess at contents or claim a memory you have not retrieved. If retrieval finds nothing, say so.
 
 For technical questions about software, instruments, or gear (how a parameter behaves, where a menu lives, what a keyswitch does), check the reference shelf first with search_reference, then read_reference on the best hit. If the shelf has nothing, use web search and prefer official documentation. Either way, say where the answer came from; never present a guess from general knowledge as documentation. If retrieved documentation contradicts what you thought you knew, the documentation wins.
 
@@ -124,25 +122,6 @@ function boardDigest() {
   }
 }
 
-async function contactsDigest() {
-  try {
-    const contacts = await readContacts();
-    return contacts.categories
-      .map((category) => {
-        const rows = contacts.contacts
-          .filter((contact) => contact.category === category.id)
-          .map((contact) => {
-            const last = contact.lastContact ? contact.lastContact.slice(0, 10) : "never contacted";
-            return `- ${contact.name} (${contact.id}), ${contact.status}, ${last}`;
-          });
-        return [`${category.name}:`, ...(rows.length ? rows : ["- (nobody yet)"])].join("\n");
-      })
-      .join("\n");
-  } catch {
-    return "Google outreach could not be read this session. The account may need to be connected or reauthorized in Settings.";
-  }
-}
-
 function readOrEmpty(filePath: string) {
   try {
     const stat = fs.statSync(filePath);
@@ -180,20 +159,6 @@ function composerDigest() {
   ].join(" ");
 }
 
-async function abletonDigest() {
-  const host = currentAbletonHost();
-  const where = host === "127.0.0.1" ? "this machine" : host;
-  const probe = await probeHost(host);
-  const live = probe.reachable
-    ? `Live ${probe.version ?? ""} is open and answering on ${where}. The get_live_* tools work right now.`.replace(
-        /\s+/g,
-        " ",
-      )
-    : `Live is NOT currently reachable on ${where} (closed, or the AbletonOSC control surface is off). The Live tools will return errors until that changes; the artist can pick a different machine in the app's Ableton panel.`;
-
-  return `${live} ${composerDigest()}`;
-}
-
 export async function buildSystemInstruction(
   modeId: string,
   assistantName: string,
@@ -203,17 +168,10 @@ export async function buildSystemInstruction(
   const workingSelf = readOrEmpty(WORKING_SELF_PATH);
   const purpose = modePurpose(modeId, assistantName);
   const referenceDocs = listReferenceDocs();
-  const voiceContext = modality === "voice" ? await Promise.all([contactsDigest(), abletonDigest()]) : null;
-  const liveContext =
-    modality === "voice"
-      ? [
-          `## Outreach right now\n\n${voiceContext![0]}`,
-          `## Ableton right now\n\n${voiceContext![1]}`,
-        ]
-      : [
-          "## Outreach\n\nOutreach data is loaded on demand. Use search_contacts and read_contact when the artist asks about a person or correspondence; do not guess from stale context.",
-          `## Ableton\n\nLive reachability and session state are loaded on demand. Call get_live_overview when the artist asks about Ableton; do not guess whether Live is open. ${composerDigest()}`,
-        ];
+  const liveContext = [
+    "## Outreach\n\nOutreach data is loaded on demand. Use search_contacts and read_contact when the artist asks about a person or correspondence; do not guess from stale context.",
+    `## Ableton\n\nLive reachability and session state are loaded on demand. Call get_live_overview when the artist asks about Ableton; do not guess whether Live is open. ${composerDigest()}`,
+  ];
 
   return [
     base,
